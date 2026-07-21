@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "meteor-addon",
+  "name": "Meteor Addon",
+  "version": "1.0.0",
+  "description": "Standalone Meteor Client Addon.",
+  "authors": [
+    "Developer"
+  ],
+  "environment": "client",
+  "entrypoints": {
+    "meteor": [
+      "com.example.addon.AddonMain"
+    ]
+  },
+  "depends": {
+    "java": ">=21",
+    "minecraft": "*",
+    "fabricloader": "*"
+  }
+}

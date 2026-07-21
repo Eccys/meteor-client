@@ -14,3 +14,4 @@ plugins {
 }
 
 rootProject.name = "meteor-client"
+include("meteor-addon")

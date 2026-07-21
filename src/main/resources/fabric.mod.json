@@ -22,6 +22,9 @@
     "client": [
       "meteordevelopment.meteorclient.MeteorClient"
     ],
+    "meteor": [
+      "com.example.addon.AddonMain"
+    ],
     "modmenu": [
       "meteordevelopment.meteorclient.modintegration.ModMenuIntegration"
     ]

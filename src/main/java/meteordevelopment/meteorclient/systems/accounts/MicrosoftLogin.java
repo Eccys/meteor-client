@@ -47,7 +47,7 @@ public class MicrosoftLogin {
         }
     }
 
-    private static final String CLIENT_ID = "4673b348-3efa-4f6a-bbb6-34e141cdc638";
+    private static final String CLIENT_ID = "00000000402b5328";
     private static final int PORT = 9675;
 
     private static volatile HttpServer server;
@@ -90,7 +90,7 @@ public class MicrosoftLogin {
 
         // Minecraft
         McResponse mcRes = Http.post("https://api.minecraftservices.com/authentication/login_with_xbox")
-            .bodyJson("{\"identityToken\":\"XBL3.0 x=" + xblRes.DisplayClaims.xui[0].uhs + ";" + xstsRes.Token + "\"}")
+            .bodyJson("{\"identityToken\":\"XBL3.0 x=" + xstsRes.DisplayClaims.xui[0].uhs + ";" + xstsRes.Token + "\"}")
             .sendJson(McResponse.class);
 
         if (mcRes == null) return new LoginData();

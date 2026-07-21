@@ -275,15 +275,12 @@ public class MicrosoftLogin {
         }
 
         private boolean hasGameOwnership() {
-            boolean hasProduct = false;
-            boolean hasGame = false;
-
             for (Item item : items) {
-                if (item.name.equals("product_minecraft")) hasProduct = true;
-                else if (item.name.equals("game_minecraft")) hasGame = true;
+                if (item.name.equals("product_minecraft") || item.name.equals("game_minecraft")) {
+                    return true;
+                }
             }
-
-            return hasProduct && hasGame;
+            return false;
         }
     }
 

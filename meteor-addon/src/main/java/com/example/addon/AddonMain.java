@@ -13,12 +13,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class AddonMain extends MeteorAddon {
-    public static final Logger LOG = LoggerFactory.getLogger("AddonMain");
-    public static final Category ADDON_CATEGORY = new Category("Addon", () -> DisplayItemUtils.toStack(Items.COMMAND_BLOCK));
+    public static final Logger LOG = LoggerFactory.getLogger("ComplexMCAddon");
+    public static final Category ADDON_CATEGORY = new Category("ComplexMC", () -> DisplayItemUtils.toStack(Items.COMMAND_BLOCK));
 
     @Override
     public void onInitialize() {
-        LOG.info("Initializing Standalone Meteor Client Addon!");
+        LOG.info("Initializing ComplexMC Bypasses Summer 2026 Addon!");
 
         // Register custom modules
         Modules.get().add(new HoldAutoLog());

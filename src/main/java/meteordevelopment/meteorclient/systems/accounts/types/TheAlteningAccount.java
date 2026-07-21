@@ -70,7 +70,7 @@ public class TheAlteningAccount extends Account<TheAlteningAccount> implements T
 
     private AuthResponse authenticate() {
         return Http.post(ENVIRONMENT.servicesHost() + "/authenticate")
-            .bodyJson(new AuthRequest("MINECRAFT", token, "Meteor on Crack!", UUID.randomUUID().toString(), true))
+            .bodyJson(new AuthRequest(new Agent("Minecraft", 1), token, "Meteor on Crack!", UUID.randomUUID().toString(), true))
             .sendJson(AuthResponse.class);
     }
 
@@ -103,7 +103,8 @@ public class TheAlteningAccount extends Account<TheAlteningAccount> implements T
         return this;
     }
 
-    private record AuthRequest(String agent, String username, String password, String clientToken, boolean requestUser) {}
+    private record AuthRequest(Agent agent, String username, String password, String clientToken, boolean requestUser) {}
+    private record Agent(String name, int version) {}
 
     private static class AuthResponse {
         public String accessToken;

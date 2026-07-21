@@ -1,0 +1,403 @@
+package com.example.addon.modules;
+
+import com.example.addon.AddonMain;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
+import meteordevelopment.meteorclient.events.render.Render3DEvent;
+import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.IntSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
+import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.orbit.EventHandler;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundClearTitlesPacket;
+import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+
+import java.util.Locale;
+import java.util.Random;
+
+public class TitleAntiAFK extends Module {
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgBruteForce = settings.createGroup("Brute Force");
+
+    private final Setting<Boolean> bruteForce = sgBruteForce.add(new BoolSetting.Builder()
+        .name("brute-force")
+        .description("Aggressively performs pixel-perfect smooth 180-degree turns and pitch up/down with 1-second cadence jumping, sneaking, and punching.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Boolean> onAnyTitle = sgBruteForce.add(new BoolSetting.Builder()
+        .name("on-any-title")
+        .description("Triggers Brute Force mode whenever ANY title display pops up, regardless of text.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> bruteForceDuration = sgBruteForce.add(new IntSetting.Builder()
+        .name("brute-force-duration-seconds")
+        .description("Duration in seconds for brute force anti-AFK execution.")
+        .defaultValue(7)
+        .min(1)
+        .sliderMax(20)
+        .visible(() -> bruteForce.get() || onAnyTitle.get())
+        .build()
+    );
+
+    private final Setting<Integer> actionCadenceSeconds = sgBruteForce.add(new IntSetting.Builder()
+        .name("action-cadence-seconds")
+        .description("Interval in seconds for jump, punch, and sneak actions during brute force.")
+        .defaultValue(1)
+        .min(1)
+        .sliderMax(5)
+        .visible(() -> bruteForce.get() || onAnyTitle.get())
+        .build()
+    );
+
+    private final Setting<Integer> titleHoldSeconds = sgGeneral.add(new IntSetting.Builder()
+        .name("title-active-seconds")
+        .description("How long to keep executing actions while title display remains active.")
+        .defaultValue(3)
+        .min(1)
+        .sliderMax(10)
+        .build()
+    );
+
+    // Position & Rotation Memory
+    private Vec3 originalPos;
+    private float originalYaw;
+    private float originalPitch;
+    private boolean savedState = false;
+
+    // Active title tracking
+    private String activeTitleText = null;
+    private int titleActiveTicks = 0;
+
+    // Sequential Camera Rotation Steps (Strictly isolated horizontal and vertical phases)
+    private enum LookStep {
+        LOOK_LEFT,
+        LOOK_RIGHT,
+        RESET_YAW,
+        LOOK_UP,
+        LOOK_DOWN,
+        RESET_PITCH
+    }
+
+    private int bruteForceTotalTicks = 0;
+    private LookStep currentLookStep = LookStep.LOOK_LEFT;
+
+    // High-FPS frame-rate interpolation variables
+    private float stepTimeElapsed = 0f;
+    private float stepDurationSeconds = 1.2f;
+    private int sneakPulseTicks = 0;
+
+    private float startYaw = 0;
+    private float targetYaw = 0;
+    private float startPitch = 0;
+    private float targetPitch = 0;
+
+    private final Random random = new Random();
+
+    public TitleAntiAFK() {
+        super(AddonMain.ADDON_CATEGORY, "title-anti-afk", "Reads on-screen title displays, performing 144+ FPS pixel-perfect camera motion, 1-second action cadences, and state restoration.");
+    }
+
+    @Override
+    public void onActivate() {
+        resetState();
+    }
+
+    @Override
+    public void onDeactivate() {
+        restoreStateIfSaved();
+        resetState();
+    }
+
+    private void saveState() {
+        if (!Utils.canUpdate() || savedState) return;
+        originalPos = mc.player.position();
+        originalYaw = mc.player.getYRot();
+        originalPitch = mc.player.getXRot();
+        savedState = true;
+    }
+
+    private void restoreStateIfSaved() {
+        if (!Utils.canUpdate() || !savedState) return;
+        mc.player.teleportTo(originalPos.x, originalPos.y, originalPos.z);
+        mc.player.setYRot(originalYaw);
+        mc.player.setXRot(originalPitch);
+        mc.options.keyShift.setDown(false);
+        mc.options.keyJump.setDown(false);
+        savedState = false;
+    }
+
+    private void resetState() {
+        activeTitleText = null;
+        titleActiveTicks = 0;
+        bruteForceTotalTicks = 0;
+        stepTimeElapsed = 0f;
+        sneakPulseTicks = 0;
+        currentLookStep = LookStep.LOOK_LEFT;
+        savedState = false;
+        if (mc.options != null) {
+            mc.options.keyShift.setDown(false);
+            mc.options.keyJump.setDown(false);
+        }
+    }
+
+    @EventHandler
+    private void onReceivePacket(PacketEvent.Receive event) {
+        if (!Utils.canUpdate()) return;
+
+        Component comp = null;
+        if (event.packet instanceof ClientboundSetTitleTextPacket p) {
+            comp = p.text();
+        } else if (event.packet instanceof ClientboundSetSubtitleTextPacket p) {
+            comp = p.text();
+        } else if (event.packet instanceof ClientboundClearTitlesPacket) {
+            if (bruteForceTotalTicks <= 0) {
+                titleActiveTicks = 0;
+                activeTitleText = null;
+            }
+            return;
+        }
+
+        if (comp != null) {
+            String text = comp.getString().toLowerCase(Locale.ROOT).trim();
+            if (!text.isEmpty()) {
+                processTitleText(text);
+            }
+        }
+    }
+
+    public void processTitleText(String text) {
+        if (text == null || text.isBlank()) return;
+
+        // Priority Lock: If Brute Force is already active, ignore second/subsequent titles until finished!
+        if (bruteForceTotalTicks > 0) {
+            info("Brute Force active: Ignored secondary title \"" + text + "\"");
+            return;
+        }
+
+        String normalized = text.toLowerCase(Locale.ROOT).trim();
+        saveState();
+        activeTitleText = normalized;
+        titleActiveTicks = titleHoldSeconds.get() * 20;
+
+        if (bruteForce.get() || onAnyTitle.get()) {
+            bruteForceTotalTicks = bruteForceDuration.get() * 20;
+            startBruteForceSequence();
+            info("Brute force Anti-AFK triggered for title: \"" + text + "\"");
+            return;
+        }
+
+        info("Title detected: \"" + text + "\" (Executing while active for " + titleHoldSeconds.get() + "s)");
+        initActionForText(normalized);
+    }
+
+    private void startBruteForceSequence() {
+        currentLookStep = LookStep.LOOK_LEFT;
+        prepareLookStep(LookStep.LOOK_LEFT);
+    }
+
+    private void prepareLookStep(LookStep step) {
+        currentLookStep = step;
+        stepTimeElapsed = 0f;
+
+        startYaw = mc.player.getYRot();
+        startPitch = mc.player.getXRot();
+
+        switch (step) {
+            case LOOK_LEFT -> { // Strict horizontal turn left
+                stepDurationSeconds = 1.2f;
+                targetYaw = originalYaw - 180f;
+                targetPitch = originalPitch;
+            }
+            case LOOK_RIGHT -> { // Strict horizontal turn right
+                stepDurationSeconds = 1.2f;
+                targetYaw = originalYaw + 180f;
+                targetPitch = originalPitch;
+            }
+            case RESET_YAW -> { // Smooth realignment to original yaw
+                stepDurationSeconds = 0.6f;
+                targetYaw = originalYaw;
+                targetPitch = originalPitch;
+            }
+            case LOOK_UP -> { // Strict vertical pitch UP
+                stepDurationSeconds = 1.2f;
+                targetYaw = originalYaw;
+                targetPitch = -75f;
+            }
+            case LOOK_DOWN -> { // Strict vertical pitch DOWN
+                stepDurationSeconds = 1.2f;
+                targetYaw = originalYaw;
+                targetPitch = 75f;
+            }
+            case RESET_PITCH -> { // Smooth realignment to original pitch
+                stepDurationSeconds = 0.6f;
+                targetYaw = originalYaw;
+                targetPitch = originalPitch;
+            }
+        }
+    }
+
+    private void advanceLookStep() {
+        switch (currentLookStep) {
+            case LOOK_LEFT -> prepareLookStep(LookStep.LOOK_RIGHT);
+            case LOOK_RIGHT -> prepareLookStep(LookStep.RESET_YAW);
+            case RESET_YAW -> prepareLookStep(LookStep.LOOK_UP);
+            case LOOK_UP -> prepareLookStep(LookStep.LOOK_DOWN);
+            case LOOK_DOWN -> prepareLookStep(LookStep.RESET_PITCH);
+            case RESET_PITCH -> prepareLookStep(LookStep.LOOK_LEFT); // Loop strict sequence
+        }
+    }
+
+    private void performPunch() {
+        if (mc.player == null) return;
+        mc.player.swing(InteractionHand.MAIN_HAND);
+        if (mc.gameMode != null && mc.hitResult != null && mc.hitResult.getType() == HitResult.Type.ENTITY) {
+            EntityHitResult hit = (EntityHitResult) mc.hitResult;
+            mc.gameMode.attack(mc.player, hit.getEntity());
+        }
+    }
+
+    private void initActionForText(String text) {
+        if (text.contains("look left")) {
+            startYaw = mc.player.getYRot();
+            targetYaw = startYaw - 180f;
+            targetPitch = originalPitch;
+            stepTimeElapsed = 0f;
+            stepDurationSeconds = 0.8f;
+        } else if (text.contains("look right")) {
+            startYaw = mc.player.getYRot();
+            targetYaw = startYaw + 180f;
+            targetPitch = originalPitch;
+            stepTimeElapsed = 0f;
+            stepDurationSeconds = 0.8f;
+        } else if (text.contains("sneak")) {
+            mc.options.keyShift.setDown(true);
+        } else if (text.contains("jump")) {
+            if (mc.player.onGround()) {
+                mc.player.jumpFromGround();
+            }
+            mc.options.keyJump.setDown(true);
+        }
+    }
+
+    @EventHandler
+    private void onRender3D(Render3DEvent event) {
+        if (!Utils.canUpdate()) return;
+
+        // High-FPS Frame-rate Render Camera Interpolation (144+ FPS Pixel-Perfect Smoothness)
+        if (bruteForceTotalTicks > 0) {
+            stepTimeElapsed += (float) event.frameTime;
+
+            float rawProgress = Math.min(1.0f, stepTimeElapsed / stepDurationSeconds);
+
+            // Cosine Smoothstep S-curve for ultra-smooth acceleration & deceleration
+            float smoothProgress = (float) ((1.0 - Math.cos(Math.PI * rawProgress)) / 2.0);
+
+            // Calculate GCD-aligned degree deltas
+            float deltaYaw = Mth.wrapDegrees(targetYaw - startYaw);
+            float deltaPitch = Mth.wrapDegrees(targetPitch - startPitch);
+
+            float currentYaw = startYaw + deltaYaw * smoothProgress;
+            float currentPitch = startPitch + deltaPitch * smoothProgress;
+
+            mc.player.setYRot(currentYaw);
+            mc.player.setXRot(currentPitch);
+            mc.player.yRotO = currentYaw;
+            mc.player.xRotO = currentPitch;
+
+            if (stepTimeElapsed >= stepDurationSeconds) {
+                advanceLookStep();
+            }
+        }
+    }
+
+    @EventHandler
+    private void onTick(TickEvent.Pre event) {
+        if (!Utils.canUpdate()) return;
+
+        if (titleActiveTicks > 0) {
+            titleActiveTicks--;
+        }
+
+        // 1. Brute Force Mode Logic (Tick Cadences)
+        if (bruteForceTotalTicks > 0) {
+            bruteForceTotalTicks--;
+
+            // Action Cadence: Jump, Punch, and Crouch Pulse every N seconds (default 1s / 20 ticks)
+            int cadenceTicks = actionCadenceSeconds.get() * 20;
+            if (bruteForceTotalTicks % cadenceTicks == 0) {
+                // Jump
+                if (mc.player.onGround()) {
+                    mc.player.jumpFromGround();
+                }
+
+                // Punch
+                performPunch();
+
+                // Start 8-tick crouch pulse
+                sneakPulseTicks = 8;
+                mc.options.keyShift.setDown(true);
+            }
+
+            if (sneakPulseTicks > 0) {
+                sneakPulseTicks--;
+                if (sneakPulseTicks == 0) {
+                    mc.options.keyShift.setDown(false);
+                }
+            }
+
+            // Sequence finished -> Restore exact pre-action state
+            if (bruteForceTotalTicks == 0) {
+                restoreStateIfSaved();
+                info("Brute force sequence finished. Restored exact position and pitch/yaw.");
+            }
+            return;
+        }
+
+        // 2. Standard Title Actions (runs continuously while title display is active)
+        if (titleActiveTicks > 0 && activeTitleText != null) {
+            String text = activeTitleText;
+
+            if (text.contains("sneak")) {
+                mc.options.keyShift.setDown(true);
+            }
+
+            if (text.contains("jump")) {
+                if (mc.player.onGround() && random.nextInt(5) == 0) {
+                    mc.player.jumpFromGround();
+                }
+            }
+
+            if (text.contains("look left") || text.contains("look right")) {
+                stepTimeElapsed += 0.05f; // tick increment
+                float rawProgress = Math.min(1.0f, stepTimeElapsed / stepDurationSeconds);
+                float smoothProgress = (float) ((1.0 - Math.cos(Math.PI * rawProgress)) / 2.0);
+                float deltaYaw = Mth.wrapDegrees(targetYaw - startYaw);
+                float currentYaw = startYaw + deltaYaw * smoothProgress;
+
+                mc.player.setYRot(currentYaw);
+                mc.player.yRotO = currentYaw;
+            }
+            return;
+        }
+
+        // Title active period expired -> restore state
+        if (savedState && titleActiveTicks == 0) {
+            restoreStateIfSaved();
+            activeTitleText = null;
+            info("Title display ended. Restored position & rotation.");
+        }
+    }
+}

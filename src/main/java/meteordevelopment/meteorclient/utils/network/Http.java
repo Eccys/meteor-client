@@ -32,6 +32,7 @@ public class Http {
 
     private static final HttpClient CLIENT = HttpClient.newBuilder()
         .executor(Executors.newVirtualThreadPerTaskExecutor())
+        .connectTimeout(java.time.Duration.ofSeconds(10))
         .build();
 
     private static final Gson GSON = new GsonBuilder()
@@ -50,7 +51,7 @@ public class Http {
 
         private Request(Method method, String url) {
             try {
-                this.builder = HttpRequest.newBuilder().uri(new URI(url)).header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36");
+                this.builder = HttpRequest.newBuilder().uri(new URI(url)).header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36").timeout(java.time.Duration.ofSeconds(10));
                 this.method = method;
             } catch (URISyntaxException e) {
                 throw new IllegalArgumentException(e);
@@ -119,8 +120,13 @@ public class Http {
             HttpRequest request = builder.build();
 
             try {
-                return CLIENT.send(request, responseBodyHandler);
+                HttpResponse<T> response = CLIENT.send(request, responseBodyHandler);
+                if (response.statusCode() != 200) {
+                    meteordevelopment.meteorclient.MeteorClient.LOG.error("Http: Request to {} failed with status {}.", request.uri(), response.statusCode());
+                }
+                return response;
             } catch (IOException | InterruptedException e) {
+                meteordevelopment.meteorclient.MeteorClient.LOG.error("Http: Exception during request to {}", request.uri(), e);
                 exceptionHandler.accept(e);
                 return new FailedHttpResponse<>(request, e);
             }

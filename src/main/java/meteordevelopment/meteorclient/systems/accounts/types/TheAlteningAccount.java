@@ -36,9 +36,14 @@ public class TheAlteningAccount extends Account<TheAlteningAccount> implements T
     @Override
     public boolean fetchInfo() {
         try {
+            MeteorClient.LOG.info("TheAlteningAccount: Authenticating with token: {}", token);
             AuthResponse res = authenticate();
-            if (res == null || res.accessToken == null || res.selectedProfile == null) {
-                MeteorClient.LOG.error("Invalid TheAltening credentials.");
+            if (res == null) {
+                MeteorClient.LOG.error("TheAlteningAccount: AuthResponse was null! Network failure or server returned non-200.");
+                return false;
+            }
+            if (res.accessToken == null || res.selectedProfile == null) {
+                MeteorClient.LOG.error("TheAlteningAccount: Invalid TheAltening credentials. Access token or profile is null.");
                 return false;
             }
 
@@ -47,9 +52,10 @@ public class TheAlteningAccount extends Account<TheAlteningAccount> implements T
             cache.uuid = res.selectedProfile.id;
             cache.loadHead();
 
+            MeteorClient.LOG.info("TheAlteningAccount: Authentication successful for {}", cache.username);
             return true;
-        } catch (Exception _) {
-            MeteorClient.LOG.error("Failed to fetch info for TheAltening account!");
+        } catch (Exception e) {
+            MeteorClient.LOG.error("Failed to fetch info for TheAltening account!", e);
             return false;
         }
     }

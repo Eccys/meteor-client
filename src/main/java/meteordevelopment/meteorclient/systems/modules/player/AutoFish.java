@@ -5,22 +5,28 @@
 
 package meteordevelopment.meteorclient.systems.modules.player;
 
+import meteordevelopment.meteorclient.events.world.PlaySoundEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.mixin.FishingHookAccessor;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
+import meteordevelopment.meteorclient.settings.SoundEventListSetting;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.world.TickRate;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.entity.projectile.FishingHook;
 import net.minecraft.world.item.FishingRodItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.enchantment.Enchantments;
+
+import java.util.List;
 
 public class AutoFish extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -82,6 +88,13 @@ public class AutoFish extends Module {
         .build()
     );
 
+    private final Setting<List<SoundEvent>> splashSounds = sgGeneral.add(new SoundEventListSetting.Builder()
+        .name("splash-sounds")
+        .description("Sounds that trigger reeling in the fishing rod.")
+        .defaultValue(SoundEvents.FISHING_BOBBER_SPLASH)
+        .build()
+    );
+
     public AutoFish() {
         super(Categories.Player, "auto-fish", "Automatically fishes for you.");
     }
@@ -96,6 +109,21 @@ public class AutoFish extends Module {
         catchDelayLeft = 0.0;
 
         wasHooked = false;
+    }
+
+    @EventHandler
+    private void onPlaySound(PlaySoundEvent event) {
+        if (mc.player == null || mc.player.fishing == null) return;
+        if (mc.player.fishing.currentState != FishingHook.FishHookState.BOBBING) return;
+        if (wasHooked) return;
+
+        for (SoundEvent sound : splashSounds.get()) {
+            if (sound.location().equals(event.sound.getIdentifier())) {
+                catchDelayLeft = randomizeDelay(catchDelay.get(), catchDelayVariance.get());
+                wasHooked = true;
+                break;
+            }
+        }
     }
 
     @EventHandler

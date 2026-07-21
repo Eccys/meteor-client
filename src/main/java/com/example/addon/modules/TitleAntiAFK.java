@@ -25,6 +25,8 @@ import java.util.Locale;
 import java.util.Random;
 
 public class TitleAntiAFK extends Module {
+    private static final float PI_FLOAT = (float) Math.PI;
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgBruteForce = settings.createGroup("Brute Force");
 
@@ -38,6 +40,13 @@ public class TitleAntiAFK extends Module {
     private final Setting<Boolean> onAnyTitle = sgBruteForce.add(new BoolSetting.Builder()
         .name("on-any-title")
         .description("Triggers Brute Force mode whenever ANY title display pops up, regardless of text.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> humanWobble = sgBruteForce.add(new BoolSetting.Builder()
+        .name("human-micro-wobble")
+        .description("Adds tiny 1-2 pixel organic human hand micro-variations to prevent straight-line camera paths.")
         .defaultValue(true)
         .build()
     );
@@ -77,11 +86,15 @@ public class TitleAntiAFK extends Module {
     private float originalPitch;
     private boolean savedState = false;
 
-    // Active title tracking
+    // Active title tracking & cached action flags for zero-alloc tick checks
     private String activeTitleText = null;
     private int titleActiveTicks = 0;
+    private boolean titleHasSneak = false;
+    private boolean titleHasJump = false;
+    private boolean titleHasLookLeft = false;
+    private boolean titleHasLookRight = false;
 
-    // Sequential Camera Rotation Steps (Strictly isolated horizontal and vertical phases)
+    // Sequential Camera Rotation Steps
     private enum LookStep {
         LOOK_LEFT,
         LOOK_RIGHT,
@@ -107,7 +120,7 @@ public class TitleAntiAFK extends Module {
     private final Random random = new Random();
 
     public TitleAntiAFK() {
-        super(AddonMain.ADDON_CATEGORY, "title-anti-afk", "Reads on-screen title displays, performing 144+ FPS pixel-perfect camera motion, 1-second action cadences, and state restoration.");
+        super(AddonMain.ADDON_CATEGORY, "title-anti-afk", "Reads on-screen title displays, performing 144+ FPS humanized camera motion, 1-second action cadences, and state restoration.");
     }
 
     @Override
@@ -142,6 +155,10 @@ public class TitleAntiAFK extends Module {
     private void resetState() {
         activeTitleText = null;
         titleActiveTicks = 0;
+        titleHasSneak = false;
+        titleHasJump = false;
+        titleHasLookLeft = false;
+        titleHasLookRight = false;
         bruteForceTotalTicks = 0;
         stepTimeElapsed = 0f;
         sneakPulseTicks = 0;
@@ -187,20 +204,25 @@ public class TitleAntiAFK extends Module {
             return;
         }
 
-        String normalized = text.toLowerCase(Locale.ROOT).trim();
         saveState();
-        activeTitleText = normalized;
+        activeTitleText = text;
         titleActiveTicks = titleHoldSeconds.get() * 20;
+
+        // Cache title action flags once to avoid string parsing on every tick
+        titleHasSneak = text.contains("sneak");
+        titleHasJump = text.contains("jump");
+        titleHasLookLeft = text.contains("look left");
+        titleHasLookRight = text.contains("look right");
 
         if (bruteForce.get() || onAnyTitle.get()) {
             bruteForceTotalTicks = bruteForceDuration.get() * 20;
             startBruteForceSequence();
-            info("Brute force Anti-AFK triggered for title: \"" + text + "\"");
+            info("★ [HOTFIX-TEST] Brute force Anti-AFK triggered for title: \"" + text + "\" ★");
             return;
         }
 
-        info("Title detected: \"" + text + "\" (Executing while active for " + titleHoldSeconds.get() + "s)");
-        initActionForText(normalized);
+        info("★ [HOTFIX-TEST] Title detected: \"" + text + "\" (Executing while active for " + titleHoldSeconds.get() + "s) ★");
+        initActionForText(text);
     }
 
     private void startBruteForceSequence() {
@@ -216,32 +238,32 @@ public class TitleAntiAFK extends Module {
         startPitch = mc.player.getXRot();
 
         switch (step) {
-            case LOOK_LEFT -> { // Strict horizontal turn left
+            case LOOK_LEFT -> {
                 stepDurationSeconds = 1.2f;
                 targetYaw = originalYaw - 180f;
                 targetPitch = originalPitch;
             }
-            case LOOK_RIGHT -> { // Strict horizontal turn right
+            case LOOK_RIGHT -> {
                 stepDurationSeconds = 1.2f;
                 targetYaw = originalYaw + 180f;
                 targetPitch = originalPitch;
             }
-            case RESET_YAW -> { // Smooth realignment to original yaw
+            case RESET_YAW -> {
                 stepDurationSeconds = 0.6f;
                 targetYaw = originalYaw;
                 targetPitch = originalPitch;
             }
-            case LOOK_UP -> { // Strict vertical pitch UP
+            case LOOK_UP -> {
                 stepDurationSeconds = 1.2f;
                 targetYaw = originalYaw;
                 targetPitch = -75f;
             }
-            case LOOK_DOWN -> { // Strict vertical pitch DOWN
+            case LOOK_DOWN -> {
                 stepDurationSeconds = 1.2f;
                 targetYaw = originalYaw;
                 targetPitch = 75f;
             }
-            case RESET_PITCH -> { // Smooth realignment to original pitch
+            case RESET_PITCH -> {
                 stepDurationSeconds = 0.6f;
                 targetYaw = originalYaw;
                 targetPitch = originalPitch;
@@ -256,7 +278,7 @@ public class TitleAntiAFK extends Module {
             case RESET_YAW -> prepareLookStep(LookStep.LOOK_UP);
             case LOOK_UP -> prepareLookStep(LookStep.LOOK_DOWN);
             case LOOK_DOWN -> prepareLookStep(LookStep.RESET_PITCH);
-            case RESET_PITCH -> prepareLookStep(LookStep.LOOK_LEFT); // Loop strict sequence
+            case RESET_PITCH -> prepareLookStep(LookStep.LOOK_LEFT);
         }
     }
 
@@ -270,21 +292,21 @@ public class TitleAntiAFK extends Module {
     }
 
     private void initActionForText(String text) {
-        if (text.contains("look left")) {
+        if (titleHasLookLeft) {
             startYaw = mc.player.getYRot();
             targetYaw = startYaw - 180f;
             targetPitch = originalPitch;
             stepTimeElapsed = 0f;
             stepDurationSeconds = 0.8f;
-        } else if (text.contains("look right")) {
+        } else if (titleHasLookRight) {
             startYaw = mc.player.getYRot();
             targetYaw = startYaw + 180f;
             targetPitch = originalPitch;
             stepTimeElapsed = 0f;
             stepDurationSeconds = 0.8f;
-        } else if (text.contains("sneak")) {
+        } else if (titleHasSneak) {
             mc.options.keyShift.setDown(true);
-        } else if (text.contains("jump")) {
+        } else if (titleHasJump) {
             if (mc.player.onGround()) {
                 mc.player.jumpFromGround();
             }
@@ -294,32 +316,40 @@ public class TitleAntiAFK extends Module {
 
     @EventHandler
     private void onRender3D(Render3DEvent event) {
-        if (!Utils.canUpdate()) return;
+        // Fast early-exit: only execute frame math during active brute force
+        if (bruteForceTotalTicks <= 0 || !Utils.canUpdate()) return;
 
-        // High-FPS Frame-rate Render Camera Interpolation (144+ FPS Pixel-Perfect Smoothness)
-        if (bruteForceTotalTicks > 0) {
-            stepTimeElapsed += (float) event.frameTime;
+        stepTimeElapsed += (float) event.frameTime;
 
-            float rawProgress = Math.min(1.0f, stepTimeElapsed / stepDurationSeconds);
+        float rawProgress = Math.min(1.0f, stepTimeElapsed / stepDurationSeconds);
 
-            // Cosine Smoothstep S-curve for ultra-smooth acceleration & deceleration
-            float smoothProgress = (float) ((1.0 - Math.cos(Math.PI * rawProgress)) / 2.0);
+        // Cosine Smoothstep S-curve for ultra-smooth acceleration & deceleration
+        float smoothProgress = 0.5f * (1.0f - (float) Math.cos(PI_FLOAT * rawProgress));
 
-            // Calculate GCD-aligned degree deltas
-            float deltaYaw = Mth.wrapDegrees(targetYaw - startYaw);
-            float deltaPitch = Mth.wrapDegrees(targetPitch - startPitch);
+        // Calculate degree deltas
+        float deltaYaw = Mth.wrapDegrees(targetYaw - startYaw);
+        float deltaPitch = Mth.wrapDegrees(targetPitch - startPitch);
 
-            float currentYaw = startYaw + deltaYaw * smoothProgress;
-            float currentPitch = startPitch + deltaPitch * smoothProgress;
+        float currentYaw = startYaw + deltaYaw * smoothProgress;
+        float currentPitch = startPitch + deltaPitch * smoothProgress;
 
-            mc.player.setYRot(currentYaw);
-            mc.player.setXRot(currentPitch);
-            mc.player.yRotO = currentYaw;
-            mc.player.xRotO = currentPitch;
-
-            if (stepTimeElapsed >= stepDurationSeconds) {
-                advanceLookStep();
+        // 1-2 Pixel Organic Human Hand Micro-Wobble (~0.14 degree deviation)
+        if (humanWobble.get() && rawProgress > 0.05f && rawProgress < 0.95f) {
+            float wobble = (float) Math.sin(stepTimeElapsed * 22.0) * 0.14f;
+            if (currentLookStep == LookStep.LOOK_LEFT || currentLookStep == LookStep.LOOK_RIGHT) {
+                currentPitch += wobble;
+            } else if (currentLookStep == LookStep.LOOK_UP || currentLookStep == LookStep.LOOK_DOWN) {
+                currentYaw += wobble;
             }
+        }
+
+        mc.player.setYRot(currentYaw);
+        mc.player.setXRot(currentPitch);
+        mc.player.yRotO = currentYaw;
+        mc.player.xRotO = currentPitch;
+
+        if (stepTimeElapsed >= stepDurationSeconds) {
+            advanceLookStep();
         }
     }
 
@@ -338,15 +368,12 @@ public class TitleAntiAFK extends Module {
             // Action Cadence: Jump, Punch, and Crouch Pulse every N seconds (default 1s / 20 ticks)
             int cadenceTicks = actionCadenceSeconds.get() * 20;
             if (bruteForceTotalTicks % cadenceTicks == 0) {
-                // Jump
                 if (mc.player.onGround()) {
                     mc.player.jumpFromGround();
                 }
 
-                // Punch
                 performPunch();
 
-                // Start 8-tick crouch pulse
                 sneakPulseTicks = 8;
                 mc.options.keyShift.setDown(true);
             }
@@ -368,22 +395,20 @@ public class TitleAntiAFK extends Module {
 
         // 2. Standard Title Actions (runs continuously while title display is active)
         if (titleActiveTicks > 0 && activeTitleText != null) {
-            String text = activeTitleText;
-
-            if (text.contains("sneak")) {
+            if (titleHasSneak) {
                 mc.options.keyShift.setDown(true);
             }
 
-            if (text.contains("jump")) {
+            if (titleHasJump) {
                 if (mc.player.onGround() && random.nextInt(5) == 0) {
                     mc.player.jumpFromGround();
                 }
             }
 
-            if (text.contains("look left") || text.contains("look right")) {
-                stepTimeElapsed += 0.05f; // tick increment
+            if (titleHasLookLeft || titleHasLookRight) {
+                stepTimeElapsed += 0.05f;
                 float rawProgress = Math.min(1.0f, stepTimeElapsed / stepDurationSeconds);
-                float smoothProgress = (float) ((1.0 - Math.cos(Math.PI * rawProgress)) / 2.0);
+                float smoothProgress = 0.5f * (1.0f - (float) Math.cos(PI_FLOAT * rawProgress));
                 float deltaYaw = Mth.wrapDegrees(targetYaw - startYaw);
                 float currentYaw = startYaw + deltaYaw * smoothProgress;
 

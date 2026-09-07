@@ -13,12 +13,14 @@ import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.util.Mth;
 
 import java.util.List;
 import java.util.Random;
 
 public class AntiAFK extends Module {
     private final SettingGroup sgActions = settings.createGroup("Actions");
+    private final SettingGroup sgCamera = settings.createGroup("Camera");
     private final SettingGroup sgMessages = settings.createGroup("Messages");
 
     // Actions
@@ -72,7 +74,7 @@ public class AntiAFK extends Module {
 
     private final Setting<Boolean> spin = sgActions.add(new BoolSetting.Builder()
         .name("spin")
-        .description("Spins the player in place.")
+        .description("Spins the player in place. Ignored while look sweep is on.")
         .defaultValue(true)
         .build()
     );
@@ -103,6 +105,63 @@ public class AntiAFK extends Module {
         .build()
     );
 
+    // Camera
+
+    private final Setting<Boolean> lookSweep = sgCamera.add(new BoolSetting.Builder()
+        .name("look-sweep")
+        .description("Pans the camera back and forth between two look angles.")
+        .defaultValue(false)
+        .onChanged(_ -> lookTick = 0)
+        .build()
+    );
+
+    private final Setting<Double> startYaw = sgCamera.add(new DoubleSetting.Builder()
+        .name("start-yaw")
+        .description("Yaw in degrees at the start of the sweep.")
+        .defaultValue(-25)
+        .sliderRange(-180, 180)
+        .visible(lookSweep::get)
+        .build()
+    );
+
+    private final Setting<Double> startPitch = sgCamera.add(new DoubleSetting.Builder()
+        .name("start-pitch")
+        .description("Pitch in degrees at the start of the sweep.")
+        .defaultValue(0)
+        .range(-90, 90)
+        .sliderRange(-90, 90)
+        .visible(lookSweep::get)
+        .build()
+    );
+
+    private final Setting<Double> endYaw = sgCamera.add(new DoubleSetting.Builder()
+        .name("end-yaw")
+        .description("Yaw in degrees at the end of the sweep.")
+        .defaultValue(25)
+        .sliderRange(-180, 180)
+        .visible(lookSweep::get)
+        .build()
+    );
+
+    private final Setting<Double> endPitch = sgCamera.add(new DoubleSetting.Builder()
+        .name("end-pitch")
+        .description("Pitch in degrees at the end of the sweep.")
+        .defaultValue(0)
+        .range(-90, 90)
+        .sliderRange(-90, 90)
+        .visible(lookSweep::get)
+        .build()
+    );
+
+    private final Setting<Double> lookDuration = sgCamera.add(new DoubleSetting.Builder()
+        .name("duration")
+        .description("Seconds to go from the start look to the end look. Then it reverses.")
+        .defaultValue(4)
+        .min(0.1)
+        .sliderRange(0.5, 20)
+        .visible(lookSweep::get)
+        .build()
+    );
 
     // Messages
 
@@ -153,6 +212,7 @@ public class AntiAFK extends Module {
     private int strafeTimer = 0;
     private boolean direction = false;
     private float lastYaw;
+    private int lookTick = 0;
 
     @Override
     public void onActivate() {
@@ -163,6 +223,7 @@ public class AntiAFK extends Module {
 
         lastYaw = mc.player.getYRot();
         messageTimer = delay.get() * 20;
+        lookTick = 0;
     }
 
     @Override
@@ -204,8 +265,30 @@ public class AntiAFK extends Module {
             strafeTimer = 20;
         }
 
-        // Spin
-        if (spin.get()) {
+        // Camera sweep (start look -> end look over duration, then back)
+        if (lookSweep.get()) {
+            int durationTicks = Math.max(1, (int) Math.round(lookDuration.get() * 20.0));
+            int cycle = durationTicks * 2;
+            int phase = lookTick;
+            lookTick = (lookTick + 1) % cycle;
+            float t = phase <= durationTicks
+                ? phase / (float) durationTicks
+                : (cycle - phase) / (float) durationTicks;
+
+            float fromYaw = startYaw.get().floatValue();
+            float toYaw = endYaw.get().floatValue();
+            float yaw = fromYaw + Mth.wrapDegrees(toYaw - fromYaw) * t;
+            float lookPitch = Mth.clamp(
+                Mth.lerp(t, startPitch.get().floatValue(), endPitch.get().floatValue()),
+                -90f,
+                90f
+            );
+
+            mc.player.setYRot(yaw);
+            mc.player.setXRot(lookPitch);
+            mc.player.yRotO = yaw;
+            mc.player.xRotO = lookPitch;
+        } else if (spin.get()) {
             lastYaw += spinSpeed.get();
             switch (spinMode.get()) {
                 case Client -> mc.player.setYRot(lastYaw);

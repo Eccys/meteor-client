@@ -141,7 +141,7 @@ public class PlayerUtils {
 
     public static boolean shouldPause(boolean ifBreaking, boolean ifEating, boolean ifDrinking) {
         if (ifBreaking && mc.gameMode.isDestroying()) return true;
-        if (ifEating && (mc.player.isUsingItem() && (mc.player.getMainHandItem().getItem().components().has(DataComponents.FOOD) || mc.player.getOffhandItem().getItem().components().has(DataComponents.FOOD))))
+        if (ifEating && (mc.player.isUsingItem() && (mc.player.getMainHandItem().has(DataComponents.FOOD) || mc.player.getOffhandItem().has(DataComponents.FOOD))))
             return true;
         return ifDrinking && (mc.player.isUsingItem() && (mc.player.getMainHandItem().getItem() instanceof PotionItem || mc.player.getOffhandItem().getItem() instanceof PotionItem));
     }

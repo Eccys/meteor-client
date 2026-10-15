@@ -132,6 +132,7 @@ public class Blur extends Module {
             // Resize all fbos
             for (int i = 0; i < fbos.length; i++) {
                 if (fbos[i] != null) {
+                    fbos[i].texture().close();
                     fbos[i].close();
                 }
 

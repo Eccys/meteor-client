@@ -81,32 +81,41 @@ public class AccountsScreen extends WindowScreen {
     }
 
     public static void addMicrosoftAccount(AddMicrosoftAccountScreen screen, AccountsScreen parent, MicrosoftLogin.LoginData data, Consumer<String> onFailure) {
-        screen.locked = true;
-        String error = null;
-        try {
-            if (data == null || !data.isGood()) {
-                error = "Microsoft sign-in did not return a valid Minecraft profile. Return to Minecraft and retry.";
-            } else {
-                MicrosoftAccount account = MicrosoftAccount.fromLoginData(data);
-                if (!account.login()) {
-                    error = "Microsoft sign-in completed, but Minecraft could not activate the account.";
-                } else {
-                    Accounts.get().add(account);
-                    account.getCache().loadHead(parent::reload);
-                }
-            }
-        } catch (RuntimeException e) {
-            error = "Microsoft account activation failed unexpectedly. Return to Minecraft and retry sign-in.";
-        }
-
-        screen.locked = false;
-        if (error != null) {
-            onFailure.accept(error);
+        if (data == null || !data.isGood()) {
+            screen.locked = false;
+            onFailure.accept("Microsoft sign-in did not return a valid Minecraft profile. Return to Minecraft and retry.");
             return;
         }
 
-        screen.onClose();
-        parent.reload();
+        screen.locked = true;
+
+        MeteorExecutor.execute(() -> {
+            String error = null;
+            MicrosoftAccount account = null;
+            try {
+                account = MicrosoftAccount.fromLoginData(data);
+                if (!account.login()) {
+                    error = "Microsoft sign-in completed, but Minecraft could not activate the account.";
+                }
+            } catch (RuntimeException e) {
+                error = "Microsoft account activation failed unexpectedly. Return to Minecraft and retry sign-in.";
+            }
+
+            String finalError = error;
+            MicrosoftAccount finalAccount = account;
+            mc.execute(() -> {
+                screen.locked = false;
+                if (finalError != null || finalAccount == null) {
+                    onFailure.accept(finalError != null ? finalError : "Microsoft account activation failed unexpectedly. Return to Minecraft and retry sign-in.");
+                    return;
+                }
+
+                Accounts.get().add(finalAccount);
+                finalAccount.getCache().loadHead(parent::reload);
+                if (mc.screen == screen) screen.onClose();
+                parent.reload();
+            });
+        });
     }
 
     @Override

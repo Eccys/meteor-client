@@ -8,7 +8,7 @@ package meteordevelopment.meteorclient.mixin;
 import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.misc.BetterChat;
-import net.minecraft.client.gui.Gui;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.Screen;
@@ -28,9 +28,9 @@ public abstract class ChatScreenMixin {
         if (Modules.get().get(BetterChat.class).isInfiniteChatBox()) input.setMaxLength(Integer.MAX_VALUE);
     }
 
-    @WrapWithCondition(method = "keyPressed", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/Gui;setScreen(Lnet/minecraft/client/gui/screens/Screen;)V"))
-    private boolean onCloseChat(Gui gui, Screen screen) {
+    @WrapWithCondition(method = "keyPressed", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;setScreen(Lnet/minecraft/client/gui/screens/Screen;)V"))
+    private boolean onCloseChat(Minecraft client, Screen screen) {
         // Commands can replace the chat screen, e.g. with a connection screen when reconnecting.
-        return gui.screen() == (Object) this;
+        return client.screen == (Object) this;
     }
 }

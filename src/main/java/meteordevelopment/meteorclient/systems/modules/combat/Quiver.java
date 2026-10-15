@@ -137,8 +137,8 @@ public class Quiver extends Module {
         arrowSlots.clear();
         List<MobEffect> usedEffects = new ArrayList<>();
 
-        for (int i = SlotUtils.MAIN_END; i >= SlotUtils.HOTBAR_START; i--) {
-            if (i == mc.player.getInventory().getSelectedSlot()) continue;
+        for (int i = SlotUtils.OFFHAND; i >= SlotUtils.HOTBAR_START; i--) {
+            if (SlotUtils.isArmor(i) || i == mc.player.getInventory().getSelectedSlot()) continue;
 
             ItemStack item = mc.player.getInventory().getItem(i);
 
@@ -186,7 +186,7 @@ public class Quiver extends Module {
         boolean charging = mc.options.keyUse.isDown();
 
         if (!charging) {
-            InvUtils.move().from(arrowSlots.getFirst()).to(9);
+            if (arrowSlots.getFirst() != 9) InvUtils.move().from(arrowSlots.getFirst()).to(9);
             mc.options.keyUse.setDown(true);
         } else {
             if (BowItem.getPowerForTime(mc.player.getTicksUsingItem()) >= 0.12) {
@@ -238,7 +238,7 @@ public class Quiver extends Module {
     }
 
     private boolean headIsOpen() {
-        testPos.set(mc.player.blockPosition().offset(0, 1, 0));
+        testPos.setWithOffset(mc.player.blockPosition(), 0, 1, 0);
         BlockState pos1 = mc.level.getBlockState(testPos);
         if (((BlockBehaviourAccessor) pos1.getBlock()).meteor$isHasCollision()) return false;
 
@@ -259,7 +259,7 @@ public class Quiver extends Module {
         for (Direction dir : Direction.values()) {
             if (dir == Direction.UP || dir == Direction.DOWN) continue;
 
-            testPos.set(target.blockPosition()).relative(dir);
+            testPos.setWithOffset(target.blockPosition(), dir);
             Block block = mc.level.getBlockState(testPos).getBlock();
 
             if (block != Blocks.OBSIDIAN && block != Blocks.BEDROCK && block != Blocks.RESPAWN_ANCHOR

@@ -55,7 +55,7 @@ public class MeteorGuiTheme extends GuiTheme {
         .sliderRange(0.75, 4)
         .onSliderRelease()
         .onChanged(_ -> {
-            if (mc.screen instanceof WidgetScreen widgetScreen) widgetScreen.invalidate();
+            if (mc != null && mc.screen instanceof WidgetScreen widgetScreen) widgetScreen.invalidate();
         })
         .build()
     );
@@ -79,7 +79,7 @@ public class MeteorGuiTheme extends GuiTheme {
         .description("Hide HUD when in GUI.")
         .defaultValue(false)
         .onChanged(v -> {
-            if (mc.screen instanceof WidgetScreen) mc.options.hideGui = v;
+            if (mc != null && mc.screen instanceof WidgetScreen) mc.options.hideGui = v;
         })
         .build()
     );
@@ -371,7 +371,7 @@ public class MeteorGuiTheme extends GuiTheme {
     public double scale(double value) {
         double scaled = value * scale.get();
 
-        if (MacosUtil.IS_MACOS) {
+        if (MacosUtil.IS_MACOS && mc != null && mc.getWindow() != null) {
             scaled /= (double) mc.getWindow().getScreenWidth() / mc.getWindow().getWidth();
         }
 

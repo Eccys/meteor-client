@@ -5,7 +5,18 @@
 
 package meteordevelopment.meteorclient;
 
-import meteordevelopment.meteorclient.utils.PostInit;
+import meteordevelopment.meteorclient.gui.DefaultSettingsWidgetFactory;
+import meteordevelopment.meteorclient.gui.themes.meteor.MeteorGuiTheme;
+import meteordevelopment.meteorclient.gui.utils.Cell;
+import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.gui.widgets.containers.WContainer;
+import meteordevelopment.meteorclient.gui.widgets.input.WTextBox;
+import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
+import meteordevelopment.meteorclient.renderer.text.TextRenderer;
+import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
+import meteordevelopment.meteorclient.settings.Settings;
+import meteordevelopment.meteorclient.settings.StringSetting;
 import meteordevelopment.meteorclient.utils.PreInit;
 import meteordevelopment.meteorclient.utils.ReflectInit;
 import meteordevelopment.meteorclient.utils.Utils;
@@ -75,6 +86,21 @@ class MeteorCoreTest {
 
             Object[] backing = getBackingArray(list);
             assertNull(backing[2], "Vacated tail slot after remove(int) must be nulled out");
+        }
+
+        @Test
+        void boundsChecksRejectOutOfRangeIndicesWithoutCorruptingSize() {
+            UnorderedArrayList<String> list = new UnorderedArrayList<>();
+            list.add("only");
+            assertThrows(IndexOutOfBoundsException.class, () -> list.get(-1));
+            assertThrows(IndexOutOfBoundsException.class, () -> list.get(1));
+            assertThrows(IndexOutOfBoundsException.class, () -> list.set(1, "bad"));
+            assertThrows(IndexOutOfBoundsException.class, () -> list.remove(5));
+            assertEquals(1, list.size());
+
+            list.clear();
+            assertThrows(IndexOutOfBoundsException.class, () -> list.remove(0));
+            assertEquals(0, list.size(), "remove(0) on cleared list must not decrement size to -1");
         }
 
         @Test
@@ -169,6 +195,7 @@ class MeteorCoreTest {
         void invalidVersionStringsThrowIllegalArgumentException() {
             assertThrows(IllegalArgumentException.class, () -> new Version("1.21"));
             assertThrows(IllegalArgumentException.class, () -> new Version("1.21.4.1"));
+            assertThrows(IllegalArgumentException.class, () -> new Version("1.21.4."));
             assertThrows(IllegalArgumentException.class, () -> new Version("1.a.0"));
         }
     }
@@ -178,20 +205,35 @@ class MeteorCoreTest {
     class ValueComparableMapTests {
 
         @Test
-        void ordersByValueAndUpdatesExistingKeyCleanly() {
+        void ordersByValueAndHandlesMissingKeysRemoveAndClearCleanly() {
             ValueComparableMap<String, Integer> map = new ValueComparableMap<>(Comparator.naturalOrder());
-            map.put("beta", 20);
-            map.put("alpha", 10);
-            map.put("gamma", 20);
+            assertNull(map.put("beta", 20));
+            assertNull(map.put("alpha", 10));
+            assertNull(map.put("gamma", 20));
 
             assertEquals(List.of("alpha", "beta", "gamma"), new ArrayList<>(map.keySet()));
             assertTrue(map.containsKey("beta"));
             assertEquals(20, map.get("beta"));
+            assertNull(map.get("missing"), "get() on missing key must return null instead of throwing NPE");
+            assertEquals(99, map.getOrDefault("missing", 99));
+            assertNull(map.remove("missing"), "remove() on missing key must return null instead of throwing NPE");
 
-            // Updating "beta" to a smaller value than "alpha" must move it to the front
-            map.put("beta", 5);
+            // Updating "beta" to a smaller value than "alpha" must return old value 20 and move it to the front
+            assertEquals(20, map.put("beta", 5));
             assertEquals(5, map.get("beta"));
             assertEquals(List.of("beta", "alpha", "gamma"), new ArrayList<>(map.keySet()));
+
+            // Removing an existing key must remove it from both TreeMap and valueMap
+            assertEquals(5, map.remove("beta"));
+            assertFalse(map.containsKey("beta"));
+            assertNull(map.get("beta"));
+            assertEquals(42, map.getOrDefault("beta", 42));
+            assertEquals(List.of("alpha", "gamma"), new ArrayList<>(map.keySet()));
+
+            // Clearing the map must also clear valueMap
+            map.clear();
+            assertTrue(map.isEmpty());
+            assertFalse(map.containsKey("alpha"));
         }
     }
 
@@ -215,6 +257,9 @@ class MeteorCoreTest {
             Color parsed = new Color();
             assertTrue(parsed.parse("12,34,56,78"));
             assertEquals(new Color(12, 34, 56, 78), parsed);
+            assertTrue(parsed.parse("300,-10,50,500"));
+            assertEquals(new Color(255, 0, 50, 255), parsed);
+            assertFalse(parsed.parse(null));
             assertFalse(parsed.parse("invalid"));
             assertFalse(parsed.parse("10,20"));
 
@@ -289,6 +334,15 @@ class MeteorCoreTest {
             assertEquals(-1, findFastest.slot());
 
             assertFalse(InvUtils.swap(0, false));
+
+            // Action chains and dropHand must safely no-op and reset state when mc.player is null
+            assertDoesNotThrow(() -> InvUtils.move().from(0).to(1));
+            assertDoesNotThrow(() -> InvUtils.click().slot(0));
+            assertDoesNotThrow(() -> InvUtils.quickSwap().fromId(0).toId(1));
+            assertDoesNotThrow(() -> InvUtils.shiftClick().slotMain(0));
+            assertDoesNotThrow(() -> InvUtils.drop().slotHotbar(0));
+            assertDoesNotThrow(() -> InvUtils.dropOne().slotOffhand());
+            assertDoesNotThrow(InvUtils::dropHand);
         }
     }
 
@@ -368,6 +422,110 @@ class MeteorCoreTest {
                 reflections.clear();
                 reflections.addAll(backup);
             }
+        }
+    }
+
+    @Nested
+    @DisplayName("GUI minWidth Scaling")
+    class GuiLayoutScalingTests {
+
+        private static final TextRenderer STUB_TEXT_RENDERER = new TextRenderer() {
+            @Override
+            public void setAlpha(double a) {}
+
+            @Override
+            public void begin(double scale, boolean scaleOnly, boolean big) {}
+
+            @Override
+            public double getWidth(String text, int length, boolean shadow) {
+                return Math.min(text.length(), length) * 8.0;
+            }
+
+            @Override
+            public double getHeight(boolean shadow) {
+                return 10.0;
+            }
+
+            @Override
+            public double render(String text, double x, double y, Color color, boolean shadow) {
+                return x + getWidth(text, text.length(), shadow);
+            }
+
+            @Override
+            public boolean isBuilding() {
+                return false;
+            }
+
+            @Override
+            public void end() {}
+        };
+
+        private static class HeadlessMeteorGuiTheme extends MeteorGuiTheme {
+            @Override
+            public TextRenderer textRenderer() {
+                return STUB_TEXT_RENDERER;
+            }
+        }
+
+        private WTextBox findTextBox(WWidget root) {
+            if (root instanceof WTextBox tb) return tb;
+            if (root instanceof WContainer container) {
+                for (Cell<?> cell : container.cells) {
+                    WTextBox found = findTextBox(cell.widget());
+                    if (found != null) return found;
+                }
+            }
+            return null;
+        }
+
+        @Test
+        void defaultSettingsWidgetFactoryDoesNotDoubleScaleMinWidthAcrossGuiScales() {
+            HeadlessMeteorGuiTheme theme = new HeadlessMeteorGuiTheme();
+            DefaultSettingsWidgetFactory factory = new DefaultSettingsWidgetFactory(theme);
+
+            Settings settings = new Settings();
+            SettingGroup sg = settings.getDefaultGroup();
+            sg.add(new BoolSetting.Builder().name("enabled").defaultValue(true).build());
+            sg.add(new StringSetting.Builder().name("wide-input").defaultValue("hello").wide().build());
+
+            double expectedWidePixels = Math.round(Utils.getWindowWidth() - Utils.getWindowWidth() / 4.0);
+
+            for (double guiScale : new double[]{0.75, 1.0, 2.0}) {
+                theme.scale.set(guiScale);
+                WWidget list = factory.create(theme, settings, "");
+
+                double firstPassWidth = list.width;
+                assertEquals(firstPassWidth / theme.scale(1), list.minWidth, 1e-6,
+                    "list.minWidth must be stored in unscaled units at scale " + guiScale);
+
+                // Second layout pass (as performed by WidgetScreen) must not compound-scale list.width
+                list.calculateSize();
+                assertEquals(firstPassWidth, list.width, 1e-6,
+                    "Second calculateSize() pass must not inflate list.width at scale " + guiScale);
+
+                WTextBox wideTextBox = findTextBox(list);
+                assertNotNull(wideTextBox, "Wide StringSetting WTextBox should be present");
+                assertEquals(expectedWidePixels, wideTextBox.width, 1e-6,
+                    "Wide StringSetting WTextBox width must equal 75% of window width at scale " + guiScale);
+            }
+        }
+
+        @Test
+        void buttonNormalizedMinWidthPreservesPixelWidthOnRelayout() {
+            HeadlessMeteorGuiTheme theme = new HeadlessMeteorGuiTheme();
+            theme.scale.set(2.0);
+
+            WButton login = theme.button("Login");
+            login.calculateSize();
+            double initialLoginWidth = login.width;
+
+            // WAccount login click pattern: preserve button width while text is replaced with "..."
+            login.minWidth = login.width / theme.scale(1);
+            login.set("...");
+            login.calculateSize();
+
+            assertEquals(initialLoginWidth, login.width, 1e-6,
+                "Normalized login.minWidth must preserve exact pixel width instead of doubling at scale 2.0");
         }
     }
 }

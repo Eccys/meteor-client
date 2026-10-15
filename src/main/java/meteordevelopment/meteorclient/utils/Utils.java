@@ -216,11 +216,11 @@ public class Utils {
     }
 
     public static int getWindowWidth() {
-        return mc.getWindow().getWidth();
+        return mc != null && mc.getWindow() != null ? mc.getWindow().getWidth() : 1280;
     }
 
     public static int getWindowHeight() {
-        return mc.getWindow().getHeight();
+        return mc != null && mc.getWindow() != null ? mc.getWindow().getHeight() : 720;
     }
 
     public static void unscaledProjection() {

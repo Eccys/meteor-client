@@ -210,6 +210,7 @@ public class InvUtils {
     }
 
     public static void dropHand() {
+        if (mc == null || mc.player == null || mc.gameMode == null || mc.player.containerMenu == null) return;
         if (!mc.player.containerMenu.getCarried().isEmpty())
             mc.gameMode.handleContainerInput(mc.player.containerMenu.containerId, AbstractContainerMenu.SLOT_CLICKED_OUTSIDE, 0, ContainerInput.PICKUP, mc.player);
     }
@@ -328,6 +329,15 @@ public class InvUtils {
         // Other
 
         private void run() {
+            if (mc == null || mc.player == null || mc.gameMode == null || mc.player.containerMenu == null) {
+                type = null;
+                two = false;
+                from = -1;
+                to = -1;
+                data = 0;
+                return;
+            }
+
             boolean hadEmptyCursor = mc.player.containerMenu.getCarried().isEmpty();
 
             if (type == ContainerInput.SWAP) {

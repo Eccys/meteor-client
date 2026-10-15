@@ -13,7 +13,7 @@ public class Version {
         this.string = string;
         this.numbers = new int[3];
 
-        String[] split = string.split("\\.");
+        String[] split = string.split("\\.", -1);
         if (split.length != 3) throw new IllegalArgumentException("Version string needs to have 3 numbers.");
 
         for (int i = 0; i < 3; i++) {

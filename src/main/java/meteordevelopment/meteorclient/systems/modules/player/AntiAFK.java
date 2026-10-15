@@ -277,7 +277,7 @@ public class AntiAFK extends Module {
 
             float fromYaw = startYaw.get().floatValue();
             float toYaw = endYaw.get().floatValue();
-            float yaw = fromYaw + Mth.wrapDegrees(toYaw - fromYaw) * t;
+            float yaw = Mth.lerp(t, fromYaw, toYaw);
             float lookPitch = Mth.clamp(
                 Mth.lerp(t, startPitch.get().floatValue(), endPitch.get().floatValue()),
                 -90f,
@@ -286,8 +286,6 @@ public class AntiAFK extends Module {
 
             mc.player.setYRot(yaw);
             mc.player.setXRot(lookPitch);
-            mc.player.yRotO = yaw;
-            mc.player.xRotO = lookPitch;
         } else if (spin.get()) {
             lastYaw += spinSpeed.get();
             switch (spinMode.get()) {

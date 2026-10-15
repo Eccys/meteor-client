@@ -78,7 +78,7 @@ public class ReflectInit {
         return switch (init) {
             case PreInit pre -> pre.dependencies();
             case PostInit post -> post.dependencies();
-            default -> new Class<?>[]{};
+            case null, default -> new Class<?>[]{};
         };
     }
 }

@@ -39,6 +39,7 @@ public class InvUtils {
     }
 
     public static boolean testInMainHand(Predicate<ItemStack> predicate) {
+        if (mc == null || mc.player == null) return false;
         return predicate.test(mc.player.getMainHandItem());
     }
 
@@ -47,6 +48,7 @@ public class InvUtils {
     }
 
     public static boolean testInOffHand(Predicate<ItemStack> predicate) {
+        if (mc == null || mc.player == null) return false;
         return predicate.test(mc.player.getOffhandItem());
     }
 
@@ -63,6 +65,7 @@ public class InvUtils {
     }
 
     public static boolean testInHotbar(Predicate<ItemStack> predicate) {
+        if (mc == null || mc.player == null) return false;
         if (testInHands(predicate)) return true;
 
         for (int i = SlotUtils.HOTBAR_START; i <= SlotUtils.HOTBAR_END; i++) {
@@ -88,6 +91,8 @@ public class InvUtils {
     }
 
     public static FindItemResult findInHotbar(Predicate<ItemStack> isGood) {
+        if (mc == null || mc.player == null) return new FindItemResult(-1, 0);
+
         if (testInOffHand(isGood)) {
             return new FindItemResult(SlotUtils.OFFHAND, mc.player.getOffhandItem().getCount());
         }
@@ -104,12 +109,12 @@ public class InvUtils {
     }
 
     public static FindItemResult find(Predicate<ItemStack> isGood) {
-        if (mc.player == null) return new FindItemResult(0, 0);
+        if (mc == null || mc.player == null) return new FindItemResult(-1, 0);
         return find(isGood, 0, mc.player.getInventory().getContainerSize());
     }
 
     public static FindItemResult find(Predicate<ItemStack> isGood, int start, int end) {
-        if (mc.player == null) return new FindItemResult(0, 0);
+        if (mc == null || mc.player == null) return new FindItemResult(-1, 0);
 
         int slot = -1, count = 0;
 
@@ -126,6 +131,8 @@ public class InvUtils {
     }
 
     public static FindItemResult findFastestTool(BlockState state) {
+        if (mc == null || mc.player == null) return new FindItemResult(-1, 0);
+
         float bestScore = 1;
         int slot = -1;
 
@@ -148,6 +155,7 @@ public class InvUtils {
     public static boolean swap(int slot, boolean swapBack) {
         if (slot == SlotUtils.OFFHAND) return true;
         if (slot < 0 || slot > 8) return false;
+        if (mc == null || mc.player == null || mc.gameMode == null) return false;
         if (swapBack && previousSlot == -1) previousSlot = mc.player.getInventory().getSelectedSlot();
         else if (!swapBack) previousSlot = -1;
 

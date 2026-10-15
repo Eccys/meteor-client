@@ -50,7 +50,7 @@ public class SlotUtils {
      * @see Slot#index
      */
     public static int indexToId(int i) {
-        if (mc.player == null) return -1;
+        if (mc == null || mc.player == null) return -1;
         AbstractContainerMenu handler = mc.player.containerMenu;
 
         return switch (handler) {

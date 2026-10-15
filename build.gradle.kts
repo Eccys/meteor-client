@@ -92,6 +92,10 @@ dependencies {
         exclude("com.google.code.gson")
         exclude("com.google.errorprone")
     }
+
+    testImplementation("net.fabricmc:fabric-loader-junit:${libs.versions.fabric.loader.get()}")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 sourceSets {
@@ -205,6 +209,10 @@ tasks {
             addStringOption("encoding", "UTF-8")
             addStringOption("charSet", "UTF-8")
         }
+    }
+
+    test {
+        useJUnitPlatform()
     }
 
     build {

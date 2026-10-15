@@ -121,10 +121,10 @@ public class AntiAFK extends Module {
 
     private final Setting<Integer> switchDelay = sgActions.add(new IntSetting.Builder()
         .name("switch-delay")
-        .description("The delay between hotbar switches in seconds.")
-        .defaultValue(5)
+        .description("The delay between hotbar switches in ticks.")
+        .defaultValue(100)
         .min(1)
-        .sliderMax(30)
+        .sliderMax(600)
         .visible(switchHotbar::get)
         .build()
     );
@@ -280,7 +280,7 @@ public class AntiAFK extends Module {
 
         lastYaw = mc.player.getYRot();
         messageTimer = delay.get() * 20;
-        hotbarTimer = switchDelay.get() * 20;
+        hotbarTimer = switchDelay.get();
         lookTick = 0;
         lastSwappedSlot = -1;
         swappedHotbarSlot = -1;
@@ -339,7 +339,7 @@ public class AntiAFK extends Module {
 
             float fromYaw = startYaw.get().floatValue();
             float toYaw = endYaw.get().floatValue();
-            float yaw = fromYaw + Mth.wrapDegrees(toYaw - fromYaw) * t;
+            float yaw = Mth.lerp(t, fromYaw, toYaw);
             float lookPitch = Mth.clamp(
                 Mth.lerp(t, startPitch.get().floatValue(), endPitch.get().floatValue()),
                 -90f,
@@ -348,8 +348,6 @@ public class AntiAFK extends Module {
 
             mc.player.setYRot(yaw);
             mc.player.setXRot(lookPitch);
-            mc.player.yRotO = yaw;
-            mc.player.xRotO = lookPitch;
         } else if (spin.get()) {
             lastYaw += spinSpeed.get();
             switch (spinMode.get()) {
@@ -359,7 +357,7 @@ public class AntiAFK extends Module {
         }
 
         // Switch Hotbar / Inventory
-        if (switchHotbar.get() && hotbarTimer-- <= 0) {
+        if (switchHotbar.get() && --hotbarTimer <= 0) {
             boolean canSwapInventory = cycleInventory.get()
                 && mc.player.containerMenu instanceof InventoryMenu
                 && mc.player.containerMenu.getCarried().isEmpty();
@@ -465,7 +463,7 @@ public class AntiAFK extends Module {
                 }
             }
 
-            hotbarTimer = switchDelay.get() * 20;
+            hotbarTimer = switchDelay.get();
         }
 
         // Messages

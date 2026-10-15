@@ -84,7 +84,12 @@ public class Utils {
     public static double frameTime;
     public static Screen screenToOpen;
 
-    private static final ProjectionMatrixBuffer matrixBuffer = new ProjectionMatrixBuffer("meteor-projection-matrix");
+    private static ProjectionMatrixBuffer matrixBuffer;
+
+    private static ProjectionMatrixBuffer getMatrixBuffer() {
+        if (matrixBuffer == null) matrixBuffer = new ProjectionMatrixBuffer("meteor-projection-matrix");
+        return matrixBuffer;
+    }
 
     private Utils() {
     }
@@ -226,7 +231,7 @@ public class Utils {
         proj.setupOrtho(-10, 100, width, height, true);
         var matrix = proj.getMatrix(new Matrix4f());
 
-        RenderSystem.setProjectionMatrix(matrixBuffer.getBuffer(matrix), ProjectionType.ORTHOGRAPHIC);
+        RenderSystem.setProjectionMatrix(getMatrixBuffer().getBuffer(matrix), ProjectionType.ORTHOGRAPHIC);
         RenderUtils.projection.set(matrix);
 
         rendering3D = false;
@@ -240,7 +245,7 @@ public class Utils {
         proj.setupOrtho(-10, 100, width, height, true);
         var matrix = proj.getMatrix(new Matrix4f());
 
-        RenderSystem.setProjectionMatrix(matrixBuffer.getBuffer(matrix), ProjectionType.PERSPECTIVE);
+        RenderSystem.setProjectionMatrix(getMatrixBuffer().getBuffer(matrix), ProjectionType.PERSPECTIVE);
         RenderUtils.projection.set(matrix);
 
         rendering3D = true;
@@ -619,7 +624,7 @@ public class Utils {
         int port;
 
         try {
-            port = Integer.parseInt(full.substring(full.lastIndexOf(':') + 1, full.length() - 1));
+            port = Integer.parseInt(full.substring(full.lastIndexOf(':') + 1));
         } catch (NumberFormatException _) {
             port = -1;
         }

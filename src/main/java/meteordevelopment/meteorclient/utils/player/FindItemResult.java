@@ -19,8 +19,9 @@ public record FindItemResult(int slot, int count) {
     }
 
     public InteractionHand getHand() {
+        if (!found()) return null;
         if (slot == SlotUtils.OFFHAND) return InteractionHand.OFF_HAND;
-        if (slot == mc.player.getInventory().getSelectedSlot()) return InteractionHand.MAIN_HAND;
+        if (mc != null && mc.player != null && slot == mc.player.getInventory().getSelectedSlot()) return InteractionHand.MAIN_HAND;
         return null;
     }
 

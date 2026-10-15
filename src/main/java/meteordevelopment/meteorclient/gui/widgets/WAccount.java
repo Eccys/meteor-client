@@ -54,7 +54,7 @@ public abstract class WAccount extends WHorizontalList {
         // Login
         WButton login = add(theme.button("Login")).widget();
         login.action = () -> {
-            login.minWidth = login.width;
+            login.minWidth = login.width / theme.scale(1);
             login.set("...");
             screen.locked = true;
 

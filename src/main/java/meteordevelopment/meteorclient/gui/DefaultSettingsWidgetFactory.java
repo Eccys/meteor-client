@@ -92,7 +92,7 @@ public class DefaultSettingsWidgetFactory extends SettingsWidgetFactory {
 
         // Calculate width and set it as minimum width
         list.calculateSize();
-        list.minWidth = list.width;
+        list.minWidth = list.width / theme.scale(1);
 
         // Remove hidden settings
         for (RemoveInfo removeInfo : removeInfoList) {
@@ -195,7 +195,7 @@ public class DefaultSettingsWidgetFactory extends SettingsWidgetFactory {
     private void stringW(WTable table, StringSetting setting) {
         CharFilter filter = setting.filter == null ? (_, _) -> true : setting.filter;
         Cell<WTextBox> cell = table.add(theme.textBox(setting.get(), setting.placeholder, filter, setting.renderer));
-        if (setting.wide) cell.minWidth(Utils.getWindowWidth() - Utils.getWindowWidth() / 4.0);
+        if (setting.wide) cell.minWidth((Utils.getWindowWidth() - Utils.getWindowWidth() / 4.0) / theme.scale(1));
 
         WTextBox textBox = cell.expandX().widget();
         textBox.action = () -> setting.set(textBox.get());
@@ -358,12 +358,12 @@ public class DefaultSettingsWidgetFactory extends SettingsWidgetFactory {
         WButton button = list.add(theme.button("Select")).expandCellX().widget();
         button.action = () -> {
             WidgetScreen screen = new PotionSettingScreen(theme, setting);
-            screen.onClosed(() -> item.set(potion));
+            screen.onClosed(() -> item.set(setting.get().potion.get()));
 
             mc.setScreen(screen);
         };
 
-        reset(list, setting, () -> item.set(potion));
+        reset(list, setting, () -> item.set(setting.get().potion.get()));
     }
 
     private void fontW(WTable table, FontFaceSetting setting) {

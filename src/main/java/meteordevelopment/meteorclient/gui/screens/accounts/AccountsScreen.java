@@ -14,11 +14,15 @@ import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.systems.accounts.Account;
 import meteordevelopment.meteorclient.systems.accounts.AccountType;
 import meteordevelopment.meteorclient.systems.accounts.Accounts;
+import meteordevelopment.meteorclient.systems.accounts.MicrosoftLogin;
+import meteordevelopment.meteorclient.systems.accounts.types.MicrosoftAccount;
 import meteordevelopment.meteorclient.utils.misc.NbtUtils;
 import meteordevelopment.meteorclient.utils.network.MeteorExecutor;
 import org.jetbrains.annotations.Nullable;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
+
+import java.util.function.Consumer;
 
 public class AccountsScreen extends WindowScreen {
     public AccountsScreen(GuiTheme theme) {
@@ -74,6 +78,35 @@ public class AccountsScreen extends WindowScreen {
                 parent.reload();
             });
         });
+    }
+
+    public static void addMicrosoftAccount(AddMicrosoftAccountScreen screen, AccountsScreen parent, MicrosoftLogin.LoginData data, Consumer<String> onFailure) {
+        screen.locked = true;
+        String error = null;
+        try {
+            if (data == null || !data.isGood()) {
+                error = "Microsoft sign-in did not return a valid Minecraft profile. Return to Minecraft and retry.";
+            } else {
+                MicrosoftAccount account = MicrosoftAccount.fromLoginData(data);
+                if (!account.login()) {
+                    error = "Microsoft sign-in completed, but Minecraft could not activate the account.";
+                } else {
+                    Accounts.get().add(account);
+                    account.getCache().loadHead(parent::reload);
+                }
+            }
+        } catch (RuntimeException e) {
+            error = "Microsoft account activation failed unexpectedly. Return to Minecraft and retry sign-in.";
+        }
+
+        screen.locked = false;
+        if (error != null) {
+            onFailure.accept(error);
+            return;
+        }
+
+        screen.onClose();
+        parent.reload();
     }
 
     @Override

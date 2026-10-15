@@ -5,21 +5,23 @@
 
 package meteordevelopment.meteorclient.systems.accounts;
 
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
-import meteordevelopment.meteorclient.MeteorClient;
-import meteordevelopment.meteorclient.utils.network.Http;
-import net.minecraft.util.Tuple;
+import meteordevelopment.meteorclient.utils.network.MeteorExecutor;
 import net.minecraft.util.Util;
+import net.raphimc.minecraftauth.MinecraftAuth;
+import net.raphimc.minecraftauth.java.JavaAuthManager;
+import net.raphimc.minecraftauth.java.model.MinecraftProfile;
+import net.raphimc.minecraftauth.java.model.MinecraftToken;
+import net.raphimc.minecraftauth.msa.data.MsaConstants;
+import net.raphimc.minecraftauth.msa.model.MsaApplicationConfig;
+import net.raphimc.minecraftauth.msa.model.MsaDeviceCode;
+import net.raphimc.minecraftauth.msa.model.MsaToken;
+import net.raphimc.minecraftauth.msa.service.impl.DeviceCodeMsaAuthService;
+import net.lenni0451.commons.httpclient.exceptions.HttpRequestException;
 
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.nio.ByteBuffer;
-import java.nio.CharBuffer;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 @SuppressWarnings("unused")
@@ -43,249 +45,240 @@ public class MicrosoftLogin {
         }
 
         public boolean isGood() {
-            return mcToken != null;
+            return !isBlank(mcToken) && !isBlank(newRefreshToken) && isValidProfileId(uuid) && isValidProfileName(username);
         }
     }
 
-    private static final String CLIENT_ID = "00000000402b5328";
-    private static final int PORT = 9675;
+    public static final class LoginResult {
+        public final LoginData data;
+        public final String error;
 
-    private static volatile HttpServer server;
-    private static volatile Consumer<String> callback;
+        LoginResult(LoginData data, String error) {
+            this.data = data;
+            this.error = error;
+        }
 
-    public static String getRefreshToken(Consumer<String> callback) {
-        MicrosoftLogin.callback = callback;
+        public boolean isGood() {
+            return data != null && data.isGood();
+        }
 
-        startServer();
-        String url = "https://login.live.com/oauth20_authorize.srf?client_id=" + CLIENT_ID + "&response_type=code&redirect_uri=http://127.0.0.1:" + PORT + "&scope=XboxLive.signin%20offline_access&prompt=select_account";
-        Util.getPlatform().openUri(url);
+        private static LoginResult success(LoginData data) {
+            return new LoginResult(data, null);
+        }
 
-        return url;
+        private static LoginResult failure(String error) {
+            return new LoginResult(null, error);
+        }
+    }
+
+    private static final MsaApplicationConfig APPLICATION_CONFIG = new MsaApplicationConfig(
+        MsaConstants.JAVA_TITLE_ID,
+        MsaConstants.SCOPE_TITLE_AUTH
+    );
+
+    private static final ThreadLocal<String> LAST_LOGIN_ERROR = new ThreadLocal<>();
+
+    /**
+     * A cancellable device-code sign-in. Create it, assign it to the screen, then call start().
+     */
+    public static final class LoginAttempt {
+        private final Consumer<String> onVerificationUri;
+        private final Consumer<LoginResult> onComplete;
+        private final LoginFlow flow;
+        private final AtomicBoolean cancelled = new AtomicBoolean();
+        private final AtomicBoolean started = new AtomicBoolean();
+        private final AtomicBoolean completed = new AtomicBoolean();
+        private final AtomicBoolean verificationPublished = new AtomicBoolean();
+        private volatile Future<?> future;
+
+        private LoginAttempt(Consumer<String> onVerificationUri, Consumer<LoginResult> onComplete, LoginFlow flow) {
+            this.onVerificationUri = onVerificationUri;
+            this.onComplete = onComplete;
+            this.flow = flow;
+        }
+
+        public void start() {
+            if (!started.compareAndSet(false, true) || cancelled.get()) return;
+            future = MeteorExecutor.executor.submit(this::run);
+            if (cancelled.get()) future.cancel(true);
+        }
+
+        public void cancel() {
+            if (!cancelled.compareAndSet(false, true)) return;
+            Future<?> task = future;
+            if (task != null) task.cancel(true);
+        }
+
+        public boolean isCancelled() {
+            return cancelled.get();
+        }
+
+        private void run() {
+            try {
+                LoginResult result = flow.authenticate(this::publishVerificationUri, cancelled);
+                complete(result == null ? LoginResult.failure("Microsoft sign-in did not finish. Return to Minecraft and retry.") : result);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                if (!cancelled.get()) complete(LoginResult.failure("Microsoft sign-in was interrupted. Return to Minecraft and retry."));
+            } catch (RuntimeException e) {
+                if (!cancelled.get()) {
+                    String error = safeFailure("Microsoft sign-in", e);
+                    complete(LoginResult.failure(error));
+                }
+            }
+        }
+
+        private void publishVerificationUri(String uri) {
+            if (cancelled.get() || isBlank(uri) || !verificationPublished.compareAndSet(false, true)) return;
+
+            if (!cancelled.get()) {
+                try {
+                    onVerificationUri.accept(uri);
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+
+        private void complete(LoginResult result) {
+            if (cancelled.get() || !completed.compareAndSet(false, true)) return;
+            try {
+                onComplete.accept(result);
+            } catch (RuntimeException ignored) {
+            }
+        }
+    }
+
+    public static LoginAttempt newLoginAttempt(Consumer<String> onVerificationUri, Consumer<LoginResult> onComplete) {
+        if (onVerificationUri == null || onComplete == null) throw new IllegalArgumentException("Callbacks cannot be null");
+        return new LoginAttempt(onVerificationUri, onComplete, MicrosoftLogin::loginWithDeviceCode);
+    }
+
+    static LoginAttempt newLoginAttempt(Consumer<String> onVerificationUri, Consumer<LoginResult> onComplete, LoginFlow flow) {
+        if (onVerificationUri == null || onComplete == null || flow == null) throw new IllegalArgumentException("Callbacks and login flow cannot be null");
+        return new LoginAttempt(onVerificationUri, onComplete, flow);
+    }
+
+    @FunctionalInterface
+    interface LoginFlow {
+        LoginResult authenticate(Consumer<String> onVerificationUri, AtomicBoolean cancelled) throws InterruptedException;
+    }
+
+    private static LoginResult loginWithDeviceCode(Consumer<String> onVerificationUri, AtomicBoolean cancelled) throws InterruptedException {
+        String stage = "Microsoft device authorization";
+        try {
+            JavaAuthManager authManager = JavaAuthManager.create(MinecraftAuth.createHttpClient())
+                .msaApplicationConfig(APPLICATION_CONFIG)
+                .login(DeviceCodeMsaAuthService::new, (Consumer<MsaDeviceCode>) deviceCode -> {
+                    if (cancelled.get()) return;
+                    String uri = deviceCode.getDirectVerificationUri();
+                    try {
+                        Util.getPlatform().openUri(uri);
+                    } catch (RuntimeException e) {
+                        // The Copy link button remains available if the system browser cannot open.
+                    }
+                    onVerificationUri.accept(uri);
+                });
+            if (cancelled.get()) return null;
+
+            stage = "Microsoft token refresh";
+            MsaToken msaToken = authManager.getMsaToken().getUpToDate();
+            if (msaToken == null || isBlank(msaToken.getRefreshToken())) throw new LoginFailure(stage + " returned an incomplete response.");
+
+            stage = "Minecraft sign-in";
+            MinecraftToken minecraftToken = authManager.getMinecraftToken().getUpToDate();
+            if (minecraftToken == null || isBlank(minecraftToken.getToken())) throw new LoginFailure(stage + " returned an incomplete response.");
+
+            stage = "Minecraft profile lookup";
+            MinecraftProfile profile = authManager.getMinecraftProfile().getUpToDate();
+            if (profile == null || profile.getId() == null || !isValidProfileName(profile.getName())) {
+                throw new LoginFailure(stage + " returned an invalid profile.");
+            }
+
+            LoginData data = new LoginData(minecraftToken.getToken(), msaToken.getRefreshToken(), profile.getId().toString(), profile.getName());
+            if (!data.isGood()) throw new LoginFailure(stage + " returned an invalid profile.");
+            return LoginResult.success(data);
+        } catch (TimeoutException e) {
+            return LoginResult.failure("Microsoft sign-in timed out or was declined. Return to Minecraft and retry.");
+        } catch (IOException | RuntimeException e) {
+            return LoginResult.failure(safeFailure(stage, e));
+        }
     }
 
     public static LoginData login(String refreshToken) {
-        // Refresh access token
-        AuthTokenResponse res = Http.post("https://login.live.com/oauth20_token.srf")
-            .bodyForm("client_id=" + CLIENT_ID + "&refresh_token=" + refreshToken + "&grant_type=refresh_token&redirect_uri=http://127.0.0.1:" + PORT)
-            .sendJson(AuthTokenResponse.class);
-
-        if (res == null) return new LoginData();
-
-        String accessToken = res.access_token;
-        refreshToken = res.refresh_token;
-
-        // XBL
-        XblXstsResponse xblRes = Http.post("https://user.auth.xboxlive.com/user/authenticate")
-            .bodyJson("{\"Properties\":{\"AuthMethod\":\"RPS\",\"SiteName\":\"user.auth.xboxlive.com\",\"RpsTicket\":\"d=" + accessToken + "\"},\"RelyingParty\":\"http://auth.xboxlive.com\",\"TokenType\":\"JWT\"}")
-            .sendJson(XblXstsResponse.class);
-
-        if (xblRes == null) return new LoginData();
-
-        // XSTS
-        XblXstsResponse xstsRes = Http.post("https://xsts.auth.xboxlive.com/xsts/authorize")
-            .bodyJson("{\"Properties\":{\"SandboxId\":\"RETAIL\",\"UserTokens\":[\"" + xblRes.Token + "\"]},\"RelyingParty\":\"rp://api.minecraftservices.com/\",\"TokenType\":\"JWT\"}")
-            .sendJson(XblXstsResponse.class);
-
-        if (xstsRes == null) return new LoginData();
-
-        // Minecraft
-        McResponse mcRes = Http.post("https://api.minecraftservices.com/authentication/login_with_xbox")
-            .bodyJson("{\"identityToken\":\"XBL3.0 x=" + xstsRes.DisplayClaims.xui[0].uhs + ";" + xstsRes.Token + "\"}")
-            .sendJson(McResponse.class);
-
-        if (mcRes == null) return new LoginData();
-
-        // Check game ownership
-        GameOwnershipResponse gameOwnershipRes = Http.get("https://api.minecraftservices.com/entitlements/mcstore")
-            .bearer(mcRes.access_token)
-            .sendJson(GameOwnershipResponse.class);
-
-        if (gameOwnershipRes == null || !gameOwnershipRes.hasGameOwnership()) return new LoginData();
-
-        // Profile
-        ProfileResponse profileRes = Http.get("https://api.minecraftservices.com/minecraft/profile")
-            .bearer(mcRes.access_token)
-            .sendJson(ProfileResponse.class);
-
-        if (profileRes == null) return new LoginData();
-
-        return new LoginData(mcRes.access_token, refreshToken, profileRes.id, profileRes.name);
-    }
-
-    private static void startServer() {
-        if (server != null) return;
-
+        LAST_LOGIN_ERROR.remove();
+        String stage = "Microsoft saved-session refresh";
         try {
-            server = HttpServer.create(new InetSocketAddress("127.0.0.1", PORT), 0);
+            JavaAuthManager authManager = JavaAuthManager.create(MinecraftAuth.createHttpClient())
+                .msaApplicationConfig(APPLICATION_CONFIG)
+                .login(refreshToken);
 
-            server.createContext("/", MicrosoftLogin::handleRequest);
-            server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-            server.start();
-        } catch (IOException e) {
-            MeteorClient.LOG.error("Error starting Microsoft login server", e);
-            stopServer();
+            MsaToken msaToken = authManager.getMsaToken().getUpToDate();
+            if (msaToken == null || isBlank(msaToken.getRefreshToken())) throw new LoginFailure(stage + " returned an incomplete response.");
+
+            stage = "Minecraft sign-in";
+            MinecraftToken minecraftToken = authManager.getMinecraftToken().getUpToDate();
+            if (minecraftToken == null || isBlank(minecraftToken.getToken())) throw new LoginFailure(stage + " returned an incomplete response.");
+
+            stage = "Minecraft profile lookup";
+            MinecraftProfile profile = authManager.getMinecraftProfile().getUpToDate();
+            if (profile == null || profile.getId() == null || !isValidProfileName(profile.getName())) throw new LoginFailure(stage + " returned an invalid profile.");
+
+            LoginData data = new LoginData(minecraftToken.getToken(), msaToken.getRefreshToken(), profile.getId().toString(), profile.getName());
+            if (!data.isGood()) throw new LoginFailure(stage + " returned an invalid profile.");
+            return data;
+        } catch (IOException | RuntimeException e) {
+            LAST_LOGIN_ERROR.set(safeFailure(stage, e));
+            return new LoginData();
         }
     }
 
-    public static void stopServer() {
-        if (server == null) return;
-
-        server.stop(0);
-        server = null;
-
-        callback = null;
+    public static String getLastLoginError() {
+        return LAST_LOGIN_ERROR.get();
     }
 
-    private static void handleRequest(HttpExchange req) throws IOException {
-        if (req.getRequestMethod().equals("GET")) {
-            // Login
-            List<Tuple<String, String>> query = parseURL(req.getRequestURI().getRawQuery());
+    private static String safeFailure(String stage, Throwable error) {
+        if (error instanceof LoginFailure) return error.getMessage();
 
-            boolean ok = false;
-            for (Tuple<String, String> pair : query) {
-                if (pair.getA().equals("code")) {
-                    handleCode(pair.getB());
-
-                    ok = true;
-                    break;
-                }
-            }
-
-
-            if (!ok) {
-                writeText(req, "Cannot authenticate.");
-                callback.accept(null);
-            } else writeText(req, "You may now close this page.");
+        int status = getHttpStatus(error);
+        if ("Minecraft profile lookup".equals(stage) && status == 404) {
+            return "Minecraft profile lookup failed (HTTP 404); this Microsoft account has no Java profile.";
         }
-
-        stopServer();
-    }
-
-    private static void handleCode(String code) {
-        AuthTokenResponse res = Http.post("https://login.live.com/oauth20_token.srf")
-            .bodyForm("client_id=" + CLIENT_ID + "&code=" + code + "&grant_type=authorization_code&redirect_uri=http://127.0.0.1:" + PORT)
-            .sendJson(AuthTokenResponse.class);
-
-        if (res == null) callback.accept(null);
-        else callback.accept(res.refresh_token);
-    }
-
-    private static void writeText(HttpExchange req, String text) throws IOException {
-        byte[] responseBody = text.getBytes(StandardCharsets.UTF_8);
-        req.sendResponseHeaders(200, responseBody.length);
-        try (var out = req.getResponseBody()) {
-            out.write(responseBody);
+        if (status >= 100 && status <= 599) return stage + " failed (HTTP " + status + ").";
+        if ("Microsoft saved-session refresh".equals(stage)) {
+            return "Microsoft saved-session refresh failed. This saved sign-in may be from the previous login method; remove and re-add the account using Microsoft.";
         }
+        return stage + " failed. Return to Minecraft and retry sign-in.";
     }
 
-    // reimplementation of apache https URLEncodedUtils#parse
-    private static List<Tuple<String, String>> parseURL(String string) {
-        List<Tuple<String, String>> query = new ArrayList<>();
-        char[] buf = string.toCharArray();
-        int i = 0;
-        while (i < buf.length) {
-            StringBuilder name = new StringBuilder();
-            StringBuilder value = new StringBuilder();
-
-            for (; i < buf.length; i++) {
-                if (buf[i] == '&' || buf[i] == ';' || buf[i] == '=') break;
-                else name.append(buf[i]);
-            }
-
-            if (i < buf.length) {
-                char ch = buf[i];
-                i += 1;
-
-                if (ch == '=') {
-                    for (; i < buf.length; i++) {
-                        if (buf[i] == '&' || buf[i] == ';') {
-                            i += 1;
-                            break;
-                        } else value.append(buf[i]);
-                    }
-                }
-            }
-
-            if (!name.isEmpty()) {
-                query.add(new Tuple<>(urlDecode(name.toString()), urlDecode(value.toString())));
+    private static int getHttpStatus(Throwable error) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            if (current instanceof HttpRequestException requestException && requestException.getResponse() != null) {
+                return requestException.getResponse().getStatusCode();
             }
         }
-
-        return query;
+        return -1;
     }
 
-    // near 1:1 copy of apache https URLEncodedUtils#urlDecode
-    // not really necessary for this particular use case but doesn't hurt to be thorough
-    private static String urlDecode(String s) {
-        if (s == null) return null;
-
-        final ByteBuffer bb = ByteBuffer.allocate(s.length());
-        final CharBuffer cb = CharBuffer.wrap(s);
-        while (cb.hasRemaining()) {
-            final char c = cb.get();
-            if (c == '%' && cb.remaining() >= 2) {
-                final char uc = cb.get();
-                final char lc = cb.get();
-                final int u = Character.digit(uc, 16);
-                final int l = Character.digit(lc, 16);
-                if (u != -1 && l != -1) {
-                    bb.put((byte) ((u << 4) + l));
-                } else {
-                    bb.put((byte) '%');
-                    bb.put((byte) uc);
-                    bb.put((byte) lc);
-                }
-            } else if (c == '+') {
-                bb.put((byte) ' ');
-            } else {
-                bb.put((byte) c);
-            }
-        }
-        bb.flip();
-        return StandardCharsets.UTF_8.decode(bb).toString();
-    }
-
-    private static class AuthTokenResponse {
-        public String access_token;
-        public String refresh_token;
-    }
-
-    private static class XblXstsResponse {
-        public String Token;
-        public DisplayClaims DisplayClaims;
-
-        private static class DisplayClaims {
-            private Claim[] xui;
-
-            private static class Claim {
-                private String uhs;
-            }
-        }
-    }
-
-    private static class McResponse {
-        public String access_token;
-    }
-
-    private static class GameOwnershipResponse {
-        private Item[] items;
-
-        private static class Item {
-            private String name;
-        }
-
-        private boolean hasGameOwnership() {
-            for (Item item : items) {
-                if (item.name.equals("product_minecraft") || item.name.equals("game_minecraft")) {
-                    return true;
-                }
-            }
+    private static boolean isValidProfileId(String id) {
+        if (id == null) return false;
+        try {
+            return java.util.UUID.fromString(id).toString().equalsIgnoreCase(id);
+        } catch (IllegalArgumentException e) {
             return false;
         }
     }
 
-    private static class ProfileResponse {
-        public String id;
-        public String name;
+    private static boolean isValidProfileName(String name) {
+        return name != null && name.matches("[A-Za-z0-9_]{3,16}");
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private static class LoginFailure extends IOException {
+        private LoginFailure(String message) {
+            super(message);
+        }
     }
 }

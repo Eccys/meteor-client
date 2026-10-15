@@ -27,7 +27,7 @@ public class AddMicrosoftAccountScreen extends AddAccountScreen {
                 AccountsScreen.addAccount(null, parent, account);
             }
 
-            onClose();
+            mc.execute(this::onClose);
         });
 
         add(theme.label("Please select the account to log into in your browser."));

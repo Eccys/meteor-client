@@ -21,6 +21,16 @@ public class MicrosoftAccount extends Account<MicrosoftAccount> {
         super(AccountType.Microsoft, refreshToken);
     }
 
+    public static MicrosoftAccount fromLoginData(MicrosoftLogin.LoginData data) {
+        MicrosoftAccount account = new MicrosoftAccount(data.newRefreshToken);
+        if (data.isGood()) {
+            account.token = data.mcToken;
+            account.cache.uuid = data.uuid;
+            account.cache.username = data.username;
+        }
+        return account;
+    }
+
     @Override
     public boolean fetchInfo() {
         token = auth();

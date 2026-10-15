@@ -21,10 +21,6 @@ repositories {
         url = uri("https://maven.meteordev.org/snapshots")
     }
     maven {
-        name = "Terraformers"
-        url = uri("https://maven.terraformersmc.com")
-    }
-    maven {
         name = "ViaVersion"
         url = uri("https://repo.viaversion.com")
     }
@@ -92,6 +88,10 @@ dependencies {
     jij(libs.netty.handler.proxy) { isTransitive = false }
     jij(libs.netty.codec.socks) { isTransitive = false }
     jij(libs.waybackauthlib)
+    jij(libs.minecraft.auth) {
+        exclude("com.google.code.gson")
+        exclude("com.google.errorprone")
+    }
 }
 
 sourceSets {

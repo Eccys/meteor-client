@@ -59,15 +59,16 @@ public abstract class WAccount extends WHorizontalList {
             screen.locked = true;
 
             MeteorExecutor.execute(() -> {
-                boolean success = account.fetchInfo() && account.login();
+                if (account.fetchInfo() && account.login()) {
+                    Accounts.get().save();
+
+                    mc.execute(() -> {
+                        name.set(account.getUsername());
+                        screen.taskAfterRender = refreshScreenAction;
+                    });
+                }
 
                 mc.execute(() -> {
-                    if (success) {
-                        name.set(account.getUsername());
-                        Accounts.get().save();
-                        screen.taskAfterRender = refreshScreenAction;
-                    }
-
                     login.minWidth = 0;
                     login.set("Login");
                     screen.locked = false;

@@ -148,8 +148,8 @@ public class Blur extends Module {
     private GpuTextureView createFbo(int i) {
         double scale = 1 / Math.pow(2, i);
 
-        int width = (int) (mc.getWindow().getWidth() * scale);
-        int height = (int) (mc.getWindow().getHeight() * scale);
+        int width = Math.max(1, (int) (mc.getWindow().getWidth() * scale));
+        int height = Math.max(1, (int) (mc.getWindow().getHeight() * scale));
 
         return RenderSystem.getDevice().createTextureView(RenderSystem.getDevice().createTexture("Blur - " + i, 15, TextureFormat.RGBA8, width, height, 1, 1));
     }

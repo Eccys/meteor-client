@@ -75,7 +75,7 @@ public class SlotUtils {
             case StonecutterMenu _ -> stonecutter(i);
             case CrafterMenu _ -> crafter(i);
             case SmithingMenu _ -> smithingTable(i);
-            default -> -1;
+            case null, default -> -1;
         };
 
     }

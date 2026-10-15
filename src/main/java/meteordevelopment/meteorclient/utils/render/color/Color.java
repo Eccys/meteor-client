@@ -247,6 +247,7 @@ public class Color implements ICopyable<Color>, ISerializable<Color> {
     }
 
     public boolean parse(String text) {
+        if (text == null) return false;
         String[] split = text.split(",");
         if (split.length != 3 && split.length != 4) return false;
 
@@ -262,6 +263,7 @@ public class Color implements ICopyable<Color>, ISerializable<Color> {
             this.b = b;
             this.a = a;
 
+            validate();
             return true;
         } catch (NumberFormatException _) {
             return false;

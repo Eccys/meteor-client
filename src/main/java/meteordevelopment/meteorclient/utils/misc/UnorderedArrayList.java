@@ -33,6 +33,7 @@ public class UnorderedArrayList<T> extends AbstractList<T> {
 
     @Override
     public T set(int index, T element) {
+        Objects.checkIndex(index, size);
         T old = items[index];
         items[index] = element;
         return old;
@@ -40,6 +41,7 @@ public class UnorderedArrayList<T> extends AbstractList<T> {
 
     @Override
     public T get(int index) {
+        Objects.checkIndex(index, size);
         return items[index];
     }
 
@@ -80,6 +82,7 @@ public class UnorderedArrayList<T> extends AbstractList<T> {
 
     @Override
     public T remove(int index) {
+        Objects.checkIndex(index, size);
         T old = items[index];
         items[index] = items[--size];
         items[size] = null;

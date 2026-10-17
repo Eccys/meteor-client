@@ -14,9 +14,14 @@ import meteordevelopment.meteorclient.gui.widgets.input.WTextBox;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.settings.Settings;
 import meteordevelopment.meteorclient.settings.StringSetting;
+import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.combat.AttributeSwap;
+import meteordevelopment.meteorclient.systems.modules.combat.AutoLog;
+import meteordevelopment.meteorclient.systems.modules.movement.GUIMove;
 import meteordevelopment.meteorclient.utils.PreInit;
 import meteordevelopment.meteorclient.utils.ReflectInit;
 import meteordevelopment.meteorclient.utils.Utils;
@@ -28,7 +33,11 @@ import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
+import net.minecraft.SharedConstants;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.Bootstrap;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -36,6 +45,7 @@ import org.reflections.Reflections;
 import org.reflections.scanners.Scanners;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -526,6 +536,147 @@ class MeteorCoreTest {
 
             assertEquals(initialLoginWidth, login.width, 1e-6,
                 "Normalized login.minWidth must preserve exact pixel width instead of doubling at scale 2.0");
+        }
+    }
+
+    @Nested
+    @DisplayName("GUIMove Screen Filtering and Key Suppression")
+    class GUIMoveTests {
+
+        @SuppressWarnings("unchecked")
+        private <T> T allocateWithoutConstructor(Class<T> clazz) throws Exception {
+            Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            theUnsafe.setAccessible(true);
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) theUnsafe.get(null);
+            return (T) unsafe.allocateInstance(clazz);
+        }
+
+        @Test
+        @SuppressWarnings("unchecked")
+        void skipHandlesAllScreenTypesAcrossGuiInventoryAndBothModes() throws Exception {
+            GUIMove guiMove = new GUIMove();
+            Setting<GUIMove.Screens> screensSetting = (Setting<GUIMove.Screens>) guiMove.settings.get("guis");
+            assertNotNull(screensSetting);
+
+            Screen pauseScreen = allocateWithoutConstructor(net.minecraft.client.gui.screens.PauseScreen.class);
+            Screen hangingSignScreen = allocateWithoutConstructor(net.minecraft.client.gui.screens.inventory.HangingSignEditScreen.class);
+            Screen anvilScreen = allocateWithoutConstructor(net.minecraft.client.gui.screens.inventory.AnvilScreen.class);
+            Screen chatScreen = allocateWithoutConstructor(net.minecraft.client.gui.screens.ChatScreen.class);
+            Screen inventoryScreen = allocateWithoutConstructor(net.minecraft.client.gui.screens.inventory.InventoryScreen.class);
+            Screen widgetScreen = allocateWithoutConstructor(meteordevelopment.meteorclient.gui.screens.ModulesScreen.class);
+
+            // Screens that must ALWAYS be skipped regardless of mode
+            for (GUIMove.Screens mode : GUIMove.Screens.values()) {
+                screensSetting.set(mode);
+                assertTrue(guiMove.skip(null), "Null screen must be skipped in mode " + mode);
+                assertTrue(guiMove.skip(pauseScreen), "PauseScreen must be skipped in mode " + mode);
+                assertTrue(guiMove.skip(hangingSignScreen), "HangingSignEditScreen must be skipped in mode " + mode);
+                assertTrue(guiMove.skip(anvilScreen), "AnvilScreen must be skipped in mode " + mode);
+                assertTrue(guiMove.skip(chatScreen), "ChatScreen must be skipped in mode " + mode);
+            }
+
+            // Screens.GUI: only WidgetScreen allowed
+            screensSetting.set(GUIMove.Screens.GUI);
+            assertFalse(guiMove.skip(widgetScreen), "WidgetScreen must not be skipped in GUI mode");
+            assertTrue(guiMove.skip(inventoryScreen), "InventoryScreen must be skipped in GUI mode");
+
+            // Screens.Inventory: only AbstractContainerScreen (except excluded ones like Anvil) allowed
+            screensSetting.set(GUIMove.Screens.Inventory);
+            assertTrue(guiMove.skip(widgetScreen), "WidgetScreen must be skipped in Inventory mode");
+            assertFalse(guiMove.skip(inventoryScreen), "InventoryScreen must not be skipped in Inventory mode");
+
+            // Screens.Both: both WidgetScreen and AbstractContainerScreen allowed, non-container screens still skipped
+            screensSetting.set(GUIMove.Screens.Both);
+            assertFalse(guiMove.skip(widgetScreen), "WidgetScreen must not be skipped in Both mode");
+            assertFalse(guiMove.skip(inventoryScreen), "InventoryScreen must not be skipped in Both mode");
+        }
+
+        @Test
+        void disableArrowsDoesNotSuppressKeysWhenScreenIsSkipped() throws Exception {
+            GUIMove guiMove = new GUIMove();
+            Field activeField = Module.class.getDeclaredField("active");
+            activeField.setAccessible(true);
+            activeField.set(guiMove, true);
+
+            // With mc == null (no valid active container/widget screen), skip() is true so arrow/space suppression must be false
+            assertTrue(guiMove.skip());
+            assertFalse(guiMove.disableArrows(), "disableArrows() must return false when current screen is skipped");
+        }
+    }
+
+    @Nested
+    @DisplayName("AttributeSwap and AutoLog Settings & Guards")
+    class CombatModuleTests {
+
+        @Test
+        @SuppressWarnings("unchecked")
+        void attributeSwapIncludesSpearInWeaponOptionsAndRespectsVisibility() throws Exception {
+            AttributeSwap swap = new AttributeSwap();
+
+            Setting<Boolean> onlyOnWeapon = (Setting<Boolean>) swap.settings.get("only-on-weapon");
+            Setting<Boolean> spear = (Setting<Boolean>) swap.settings.get("spear");
+            assertNotNull(onlyOnWeapon);
+            assertNotNull(spear, "AttributeSwap Weapon Options must include a 'spear' setting");
+            assertTrue(spear.get());
+
+            onlyOnWeapon.set(false);
+            assertFalse(spear.isVisible(), "spear weapon filter should be hidden when only-on-weapon is false");
+
+            Method canSwapByWeapon = AttributeSwap.class.getDeclaredMethod("canSwapByWeapon");
+            canSwapByWeapon.setAccessible(true);
+            assertTrue((Boolean) canSwapByWeapon.invoke(swap), "canSwapByWeapon() must return true when only-on-weapon is disabled");
+
+            onlyOnWeapon.set(true);
+            assertTrue(spear.isVisible(), "spear weapon filter should be visible when only-on-weapon is true");
+            assertFalse((Boolean) canSwapByWeapon.invoke(swap), "canSwapByWeapon() must return false when only-on-weapon is true and player is null");
+
+            Setting<AttributeSwap.Mode> mode = (Setting<AttributeSwap.Mode>) swap.settings.get("mode");
+            Setting<Boolean> spearSwapping = (Setting<Boolean>) swap.settings.get("spear-swapping");
+            Setting<Boolean> spearHitbox = (Setting<Boolean>) swap.settings.get("hitbox");
+            Setting<Boolean> excludeLunge = (Setting<Boolean>) swap.settings.get("exclude-lunge-from-hitbox");
+            assertNotNull(mode);
+            assertNotNull(spearSwapping);
+            assertNotNull(spearHitbox);
+            assertNotNull(excludeLunge);
+
+            mode.set(AttributeSwap.Mode.Smart);
+            spearSwapping.set(true);
+            spearHitbox.set(true);
+            assertTrue(excludeLunge.isVisible());
+            spearHitbox.set(false);
+            assertFalse(excludeLunge.isVisible());
+
+            SharedConstants.tryDetectVersion();
+            Bootstrap.bootStrap();
+
+            Method isValidSpear = AttributeSwap.class.getDeclaredMethod("isValidSpear", net.minecraft.world.item.ItemStack.class, boolean.class);
+            isValidSpear.setAccessible(true);
+            assertFalse((Boolean) isValidSpear.invoke(swap, net.minecraft.world.item.ItemStack.EMPTY, false));
+            assertFalse((Boolean) isValidSpear.invoke(swap, net.minecraft.world.item.ItemStack.EMPTY, true));
+        }
+
+        @Test
+        @SuppressWarnings("unchecked")
+        void autoLogZeroHealthDisablesDamagePredictionAndSmartToggleVisibility() {
+            SharedConstants.tryDetectVersion();
+            Bootstrap.bootStrap();
+
+            AutoLog autoLog = new AutoLog();
+            Setting<Integer> health = (Setting<Integer>) autoLog.settings.get("health");
+            Setting<Boolean> predictDamage = (Setting<Boolean>) autoLog.settings.get("predict-incoming-damage");
+            Setting<Boolean> smartToggle = (Setting<Boolean>) autoLog.settings.get("smart-toggle");
+
+            assertNotNull(health);
+            assertNotNull(predictDamage);
+            assertNotNull(smartToggle);
+
+            health.set(6);
+            assertTrue(predictDamage.isVisible());
+            assertTrue(smartToggle.isVisible());
+
+            health.set(0);
+            assertFalse(predictDamage.isVisible(), "predict-incoming-damage must be hidden/inactive when health is set to 0 (disabled)");
+            assertFalse(smartToggle.isVisible(), "smart-toggle must be hidden when health is set to 0 (disabled)");
         }
     }
 }

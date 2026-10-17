@@ -20,6 +20,7 @@ import meteordevelopment.meteorclient.utils.misc.input.KeyAction;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.screens.ChatScreen;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.*;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.CreativeModeTabs;
@@ -104,11 +105,11 @@ public class GUIMove extends Module {
     }
 
     public boolean disableSpace() {
-        return isActive() && jump.get() && mc.options.keyJump.isDefault();
+        return isActive() && jump.get() && mc.options.keyJump.isDefault() && !skip();
     }
 
     public boolean disableArrows() {
-        return isActive() && arrowsRotate.get();
+        return isActive() && arrowsRotate.get() && !skip();
     }
 
     @EventHandler
@@ -176,14 +177,19 @@ public class GUIMove extends Module {
     }
 
     public boolean skip() {
-        if (mc.screen == null ||
-            (mc.screen instanceof CreativeModeInventoryScreen && CreativeModeInventoryScreenAccessor.meteor$getSelectedTab() == CreativeModeTabs.searchTab())
-            || mc.screen instanceof ChatScreen
-            || mc.screen instanceof SignEditScreen
-            || mc.screen instanceof AnvilScreen
-            || mc.screen instanceof AbstractCommandBlockEditScreen
-            || mc.screen instanceof StructureBlockEditScreen) return true;
-        if (screens.get() == Screens.GUI && !(mc.screen instanceof WidgetScreen)) return true;
-        return screens.get() == Screens.Inventory && mc.screen instanceof WidgetScreen;
+        return mc == null || skip(mc.screen);
+    }
+
+    public boolean skip(Screen screen) {
+        if (screen == null ||
+            (screen instanceof CreativeModeInventoryScreen && CreativeModeInventoryScreenAccessor.meteor$getSelectedTab() == CreativeModeTabs.searchTab())
+            || screen instanceof ChatScreen
+            || screen instanceof AbstractSignEditScreen
+            || screen instanceof AnvilScreen
+            || screen instanceof AbstractCommandBlockEditScreen
+            || screen instanceof StructureBlockEditScreen) return true;
+        if (screens.get() == Screens.GUI) return !(screen instanceof WidgetScreen);
+        if (screens.get() == Screens.Inventory) return !(screen instanceof AbstractContainerScreen<?>);
+        return !(screen instanceof WidgetScreen || screen instanceof AbstractContainerScreen<?>);
     }
 }

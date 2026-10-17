@@ -589,6 +589,41 @@ class MeteorCoreTest {
             screensSetting.set(GUIMove.Screens.Both);
             assertFalse(guiMove.skip(widgetScreen), "WidgetScreen must not be skipped in Both mode");
             assertFalse(guiMove.skip(inventoryScreen), "InventoryScreen must not be skipped in Both mode");
+
+            // Focused EditBox inside an AbstractContainerScreen must cause skip(screen) to return true
+            net.minecraft.client.gui.components.EditBox editBox =
+                allocateWithoutConstructor(net.minecraft.client.gui.components.EditBox.class);
+            editBox.visible = true;
+            editBox.active = true;
+
+            Field widgetFocusedField = net.minecraft.client.gui.components.AbstractWidget.class.getDeclaredField("focused");
+            widgetFocusedField.setAccessible(true);
+            widgetFocusedField.setBoolean(editBox, true);
+
+            Field isEditableField = net.minecraft.client.gui.components.EditBox.class.getDeclaredField("isEditable");
+            isEditableField.setAccessible(true);
+            isEditableField.setBoolean(editBox, true);
+
+            Field screenFocusedField = net.minecraft.client.gui.components.events.AbstractContainerEventHandler.class.getDeclaredField("focused");
+            screenFocusedField.setAccessible(true);
+            screenFocusedField.set(inventoryScreen, editBox);
+
+            assertTrue(editBox.canConsumeInput(), "Configured EditBox should report canConsumeInput() == true");
+            assertTrue(guiMove.skip(inventoryScreen), "Container screen with a focused editable EditBox must be skipped");
+
+            // When the EditBox is unfocused, the container screen is no longer skipped
+            widgetFocusedField.setBoolean(editBox, false);
+            assertFalse(editBox.canConsumeInput());
+            assertFalse(guiMove.skip(inventoryScreen), "Container screen with an unfocused EditBox must not be skipped");
+            screenFocusedField.set(inventoryScreen, null);
+
+            // Focused WTextBox in WidgetScreen (GuiKeyEvents.canUseKeys == false) must also cause skip(screen) to return true
+            meteordevelopment.meteorclient.gui.GuiKeyEvents.canUseKeys = false;
+            try {
+                assertTrue(guiMove.skip(widgetScreen), "WidgetScreen with focused WTextBox (!GuiKeyEvents.canUseKeys) must be skipped");
+            } finally {
+                meteordevelopment.meteorclient.gui.GuiKeyEvents.canUseKeys = true;
+            }
         }
 
         @Test
@@ -601,6 +636,15 @@ class MeteorCoreTest {
             // With mc == null (no valid active container/widget screen), skip() is true so arrow/space suppression must be false
             assertTrue(guiMove.skip());
             assertFalse(guiMove.disableArrows(), "disableArrows() must return false when current screen is skipped");
+
+            Field wasSkippedField = GUIMove.class.getDeclaredField("wasSkipped");
+            wasSkippedField.setAccessible(true);
+            wasSkippedField.setBoolean(guiMove, false);
+
+            Method checkSkipMethod = GUIMove.class.getDeclaredMethod("checkSkip");
+            checkSkipMethod.setAccessible(true);
+            assertTrue((Boolean) checkSkipMethod.invoke(guiMove));
+            assertTrue(wasSkippedField.getBoolean(guiMove), "checkSkip() must transition wasSkipped to true when skip() is true");
         }
     }
 
@@ -653,13 +697,59 @@ class MeteorCoreTest {
             isValidSpear.setAccessible(true);
             assertFalse((Boolean) isValidSpear.invoke(swap, net.minecraft.world.item.ItemStack.EMPTY, false));
             assertFalse((Boolean) isValidSpear.invoke(swap, net.minecraft.world.item.ItemStack.EMPTY, true));
+
+            Method isWithinMeleeRange = AttributeSwap.class.getDeclaredMethod("isWithinMeleeRange", net.minecraft.world.phys.EntityHitResult.class);
+            isWithinMeleeRange.setAccessible(true);
+
+            Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            theUnsafe.setAccessible(true);
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) theUnsafe.get(null);
+
+            class StubLocalPlayer extends net.minecraft.client.player.LocalPlayer {
+                StubLocalPlayer() {
+                    super(null, null, null, null, null, null, false, null);
+                }
+
+                @Override
+                public double entityInteractionRange() {
+                    return 3.0;
+                }
+            }
+
+            net.minecraft.client.Minecraft stubMc =
+                (net.minecraft.client.Minecraft) unsafe.allocateInstance(net.minecraft.client.Minecraft.class);
+            stubMc.player = (StubLocalPlayer) unsafe.allocateInstance(StubLocalPlayer.class);
+            Field positionField = net.minecraft.world.entity.Entity.class.getDeclaredField("position");
+            positionField.setAccessible(true);
+            positionField.set(stubMc.player, net.minecraft.world.phys.Vec3.ZERO);
+
+            Field mcField = Module.class.getDeclaredField("mc");
+            mcField.setAccessible(true);
+            Object oldMc = mcField.get(swap);
+            try {
+                mcField.set(swap, stubMc);
+                net.minecraft.world.phys.EntityHitResult closeHit =
+                    new net.minecraft.world.phys.EntityHitResult(null, new net.minecraft.world.phys.Vec3(0, 0, 2.5));
+                net.minecraft.world.phys.EntityHitResult spearExtendedHit =
+                    new net.minecraft.world.phys.EntityHitResult(null, new net.minecraft.world.phys.Vec3(0, 0, 4.0));
+
+                assertTrue((Boolean) isWithinMeleeRange.invoke(swap, closeHit),
+                    "2.5m hit must be within 3.0m normal melee interaction range");
+                assertFalse((Boolean) isWithinMeleeRange.invoke(swap, spearExtendedHit),
+                    "4.0m extended-reach spear hit must not be treated as within 3.0m normal melee range");
+            } finally {
+                mcField.set(swap, oldMc);
+            }
         }
 
         @Test
         @SuppressWarnings("unchecked")
-        void autoLogZeroHealthDisablesDamagePredictionAndSmartToggleVisibility() {
+        void autoLogZeroHealthDisablesDamagePredictionAndSmartToggleVisibility() throws Exception {
             SharedConstants.tryDetectVersion();
             Bootstrap.bootStrap();
+
+            MeteorClient.EVENT_BUS.registerLambdaFactory("meteordevelopment.meteorclient",
+                (lookupInMethod, klass) -> (java.lang.invoke.MethodHandles.Lookup) lookupInMethod.invoke(null, klass, java.lang.invoke.MethodHandles.lookup()));
 
             AutoLog autoLog = new AutoLog();
             Setting<Integer> health = (Setting<Integer>) autoLog.settings.get("health");
@@ -677,6 +767,20 @@ class MeteorCoreTest {
             health.set(0);
             assertFalse(predictDamage.isVisible(), "predict-incoming-damage must be hidden/inactive when health is set to 0 (disabled)");
             assertFalse(smartToggle.isVisible(), "smart-toggle must be hidden when health is set to 0 (disabled)");
+
+            // Verify StaticListener unsubscribes cleanly when health is 0
+            Method enableHealthListener = AutoLog.class.getDeclaredMethod("enableHealthListener");
+            enableHealthListener.setAccessible(true);
+            enableHealthListener.invoke(autoLog);
+
+            Field staticListenerField = AutoLog.class.getDeclaredField("staticListener");
+            staticListenerField.setAccessible(true);
+            Object staticListener = staticListenerField.get(autoLog);
+            Method healthListenerMethod = staticListener.getClass().getDeclaredMethod(
+                "healthListener", meteordevelopment.meteorclient.events.world.TickEvent.Post.class);
+            healthListenerMethod.setAccessible(true);
+            assertDoesNotThrow(() -> healthListenerMethod.invoke(
+                staticListener, meteordevelopment.meteorclient.events.world.TickEvent.Post.get()));
         }
     }
 }
